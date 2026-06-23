@@ -195,11 +195,12 @@ export async function deleteSavedWord(id: string): Promise<void> {
 // Settings Operation (using localStorage to keep it simple, since reader settings are lightweight config)
 const SETTINGS_KEY = "epub-reader-settings";
 const DEFAULT_SETTINGS: ReaderSettings = {
-  theme: "warm",
+  theme: "dark",
   fontFamily: "Literata",
   fontSize: 18,
   lineHeight: 1.7,
   contentWidth: 740,
+  viewMode: "single",
 };
 
 export function getReaderSettings(): ReaderSettings {

@@ -7,7 +7,6 @@ import React, { useState, useEffect, useRef } from "react";
 import { Book } from "../../types";
 import { getAllBooks, saveBookMetadata, saveBookFile, deleteBookMetadata, deleteBookFile } from "../../utils/db";
 import { parseEpub } from "../../utils/epubParser";
-import { UploadCloud, BookOpen, Trash2, Calendar, Layout, Loader } from "lucide-react";
 
 interface LibraryViewProps {
   onBookSelect: (bookId: string) => void;
@@ -137,26 +136,25 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto px-6 py-12 md:py-16 text-neutral-905 dark:text-neutral-100 min-h-screen flex flex-col justify-between" id="lib-root">
+    <div className="w-full max-w-5xl mx-auto px-6 py-12 md:py-16 text-black dark:text-white min-h-screen flex flex-col justify-start" id="lib-root">
       <div>
         {/* Top Header Branding Row */}
-        <div className="flex flex-col md:flex-row md:items-end justify-between mb-12 border-b border-black/5 dark:border-white/5 pb-8 gap-4" id="lib-header">
+        <div className="flex flex-col sm:flex-row sm:items-baseline justify-between mb-10 border-b border-black/10 dark:border-white/10 pb-6 gap-4" id="lib-header">
           <div>
-            <h1 className="font-serif font-black text-4xl md:text-5xl tracking-tight text-[#111111] dark:text-white leading-none mb-3 italic">
+            <h1 className="font-serif font-bold text-3xl tracking-tight text-black dark:text-white leading-none mb-1">
               The Bookshelf
             </h1>
-            <p className="font-sans text-[10px] text-black/65 dark:text-white/60 uppercase tracking-[0.25em] font-semibold flex items-center gap-1.5">
-              <Layout className="w-3.5 h-3.5" /> PERSONAL LITERARY ARCHIVE
+            <p className="font-sans text-[9px] text-black/50 dark:text-white/50 uppercase tracking-[0.25em] font-bold">
+              PERSONAL LITERARY ARCHIVE
             </p>
           </div>
 
           <button
             onClick={triggerFileBrowser}
             id="btn-upload-nav"
-            className="px-5 py-2.5 rounded-sm border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 text-[10px] uppercase tracking-[0.15em] font-sans font-bold shadow-sm hover:bg-black/5 dark:hover:bg-white/5 active:scale-99 transition-all flex items-center justify-center gap-2 cursor-pointer"
+            className="px-4 py-2 rounded-sm border border-black dark:border-white bg-black dark:bg-white text-white dark:text-black text-[9px] uppercase tracking-[0.15em] font-sans font-bold hover:bg-transparent hover:text-black dark:hover:bg-transparent dark:hover:text-white transition-all cursor-pointer"
           >
-            <UploadCloud className="w-4 h-4 text-neutral-400" />
-            <span>Import Document</span>
+            Import Document
           </button>
           <input
             ref={fileInputRef}
@@ -169,7 +167,7 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
         </div>
 
         {uploadError && (
-          <div className="mb-8 p-4 rounded-sm border border-red-250/20 bg-red-500/5 text-red-600 dark:text-red-400 text-xs tracking-wider uppercase font-sans flex flex-col gap-1" id="upload-err">
+          <div className="mb-6 p-4 rounded-sm border border-black dark:border-white bg-black/5 dark:bg-white/5 text-black dark:text-white text-xs tracking-wider uppercase font-sans flex flex-col gap-1" id="upload-err">
             <span className="font-bold">Import failed</span>
             <span className="opacity-80 normal-case">{uploadError}</span>
           </div>
@@ -177,20 +175,16 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
 
         {/* Dynamic upload loader */}
         {isUploading && (
-          <div className="mb-8 p-6 rounded-sm border border-black/10 dark:border-white/10 bg-black/5 dark:bg-white/5 text-neutral-800 dark:text-neutral-200 text-xs font-sans flex items-center gap-3 animate-pulse" id="upload-spinner">
-            <Loader className="w-5 h-5 animate-spin text-neutral-500" />
-            <div>
-              <p className="font-bold uppercase tracking-widest text-[9px] opacity-60">Parsing EPUB container...</p>
-              <p className="text-neutral-500 dark:text-neutral-400 font-normal">Extracting spine elements and parsing headings</p>
-            </div>
+          <div className="mb-6 p-4 rounded-sm border border-black dark:border-white bg-black/5 dark:bg-white/5 text-black dark:text-white text-xs font-sans animate-pulse" id="upload-spinner">
+            <p className="font-bold uppercase tracking-widest text-[9px]">Parsing EPUB container...</p>
+            <p className="opacity-80 font-normal">Extracting spine elements and parsing headings</p>
           </div>
         )}
 
         {/* Dynamic list rendering */}
         {loading ? (
-          <div className="text-center py-20" id="lib-loading-anim">
-            <Loader className="w-10 h-10 animate-spin text-neutral-300 mx-auto mb-4" />
-            <p className="text-[10px] uppercase tracking-[0.2em] font-sans opacity-45">Accessing database spaces...</p>
+          <div className="text-center py-16 text-black dark:text-white animate-pulse" id="lib-loading-anim">
+            <p className="text-[9px] uppercase tracking-[0.2em] font-sans font-bold">Accessing library database...</p>
           </div>
         ) : books.length === 0 ? (
           /* Empty Library State with Dropzone */
@@ -201,24 +195,23 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
             onDrop={handleDrop}
             onClick={triggerFileBrowser}
             id="lib-dropzone"
-            className={`p-12 md:p-20 text-center rounded-sm border border-dashed flex flex-col items-center justify-center cursor-pointer transition-all ${
+            className={`p-12 md:p-16 text-center rounded-sm border border-dashed flex flex-col items-center justify-center cursor-pointer transition-all ${
               dragActive
                 ? "border-black dark:border-white bg-black/5 dark:bg-white/5"
-                : "border-black/20 dark:border-white/20 bg-transparent hover:border-black/40 dark:hover:border-white/40"
+                : "border-black/25 dark:border-white/25 bg-transparent hover:border-black dark:hover:border-white"
             }`}
           >
-            <UploadCloud className={`w-12 h-12 mb-4 text-black/30 dark:text-white/30 transition-transform ${dragActive ? "scale-110 rotate-1" : ""}`} />
-            <h3 className="font-serif italic text-2xl text-[#111111] dark:text-white mb-2 font-medium">Drop an EPUB to start reading</h3>
-            <p className="font-sans text-xs tracking-wider text-black/50 dark:text-white/50 max-w-sm leading-relaxed mb-6">
-              Dragged documents are parsed and saved completely inside your browser's IndexedDB offline sandbox database.
+            <h3 className="font-serif italic text-2xl text-black dark:text-white mb-2 font-medium">Drop an EPUB to start reading</h3>
+            <p className="font-sans text-[11px] tracking-wider text-black/60 dark:text-white/60 max-w-sm leading-relaxed mb-6">
+              Documents are processed locally in your browser's IndexedDB sandbox database.
             </p>
-            <span className="px-5 py-2.5 bg-[#111111] dark:bg-white text-white dark:text-[#111111] rounded-sm text-[10px] uppercase tracking-[0.2em] font-bold shadow-md hover:opacity-85 transition-opacity">
+            <span className="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-sm text-[9px] uppercase tracking-[0.2em] font-bold hover:bg-white hover:text-black dark:hover:bg-black dark:hover:text-white border border-black dark:border-white transition-all">
               Select Book File
             </span>
           </div>
         ) : (
           /* Book lists Cards Grid */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8" id="lib-books-grid">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="lib-books-grid">
             {books.map((book) => {
               const formattedProgress = book.progress ? Math.round(book.progress.scrollPercent || 0) : 0;
               return (
@@ -226,53 +219,46 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
                   key={book.id}
                   id={`book-card-${book.id}`}
                   onClick={() => onBookSelect(book.id)}
-                  className="group relative flex flex-col justify-between p-6 rounded-sm border border-black/10 dark:border-white/10 bg-white/50 dark:bg-neutral-900/40 transition-all hover:bg-white dark:hover:bg-neutral-900 shadow-sm hover:shadow-md cursor-pointer hover:border-black/30 dark:hover:border-white/30"
+                  className="group relative flex flex-col justify-between p-5 rounded-sm border border-black/10 dark:border-white/10 bg-transparent transition-all hover:bg-black/[0.02] dark:hover:bg-white/[0.02] hover:border-black dark:hover:border-white cursor-pointer"
                 >
                   {/* Card top */}
-                  <div className="space-y-4">
-                    {/* Cover placeholder icon with elegant serif text */}
-                    <div className="w-10 h-10 rounded-sm bg-black/5 dark:bg-white/5 flex items-center justify-center text-black/40 dark:text-white/40 group-hover:text-[#111111] group-hover:bg-black/10 dark:group-hover:text-white dark:group-hover:bg-white/10 transition-all">
-                      <BookOpen className="w-4.5 h-4.5 stroke-[1.5]" />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <h3 className="font-serif font-medium text-2xl text-[#111111] dark:text-white leading-tight italic tracking-tight group-hover:text-black dark:group-hover:text-white">
-                        {book.title}
-                      </h3>
-                      <p className="font-sans text-[10px] text-black/50 dark:text-white/50 uppercase tracking-[0.15em] font-semibold truncate">
-                        {book.author}
-                      </p>
-                    </div>
+                  <div className="space-y-2">
+                    <h3 className="font-serif font-medium text-xl text-black dark:text-white leading-tight italic tracking-tight">
+                      {book.title}
+                    </h3>
+                    <p className="font-sans text-[9px] text-black/60 dark:text-white/60 uppercase tracking-[0.15em] font-bold truncate">
+                      {book.author}
+                    </p>
                   </div>
 
                   {/* Card bottom footer detail */}
-                  <div className="mt-8 pt-4 border-t border-black/5 dark:border-white/5 space-y-4">
+                  <div className="mt-6 pt-4 border-t border-black/5 dark:border-white/5 space-y-4">
                     {/* Progress slider bar representation */}
                     <div className="space-y-1.5" id={`progress-sec-${book.id}`}>
-                      <div className="flex items-center justify-between text-[9px] font-sans font-bold uppercase tracking-widest text-[#111111]/40 dark:text-white/40">
+                      <div className="flex items-center justify-between text-[9px] font-sans font-bold uppercase tracking-widest text-black/50 dark:text-white/50">
                         <span>Progress</span>
                         <span>{formattedProgress}%</span>
                       </div>
-                      <div className="w-full h-[2px] bg-black/5 dark:bg-white/5 rounded-full overflow-hidden">
+                      <div className="w-full h-[1px] bg-black/10 dark:bg-white/10 overflow-hidden">
                         <div
-                          className="h-full bg-[#111111] dark:bg-white transition-all duration-300"
+                          className="h-full bg-black dark:bg-white transition-all duration-300"
                           style={{ width: `${formattedProgress}%` }}
                         />
                       </div>
                     </div>
 
                     {/* Metadata indicators */}
-                    <div className="flex items-center justify-between text-[9px] font-sans uppercase tracking-widest text-[#111111]/40 dark:text-white/40 select-none">
-                      <span className="flex items-center gap-1">
-                        <Calendar className="w-3.5 h-3.5" /> {formatDateLabel(book.lastOpenedAt)}
+                    <div className="flex items-center justify-between text-[8px] font-sans uppercase tracking-widest text-black/50 dark:text-white/50 select-none">
+                      <span>
+                        Opened: {formatDateLabel(book.lastOpenedAt)}
                       </span>
                       <button
                         onClick={(e) => handleDeleteBook(e, book)}
                         id={`btn-del-book-${book.id}`}
                         title="Remove book"
-                        className="p-1 rounded-sm text-neutral-450 hover:text-red-600 hover:bg-red-500/5 transition-all cursor-pointer"
+                        className="px-2 py-0.5 rounded-sm border border-black/10 dark:border-white/10 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white transition-all cursor-pointer font-bold text-[8px] uppercase tracking-wider bg-transparent"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        Remove
                       </button>
                     </div>
                   </div>
@@ -285,20 +271,20 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
 
       {/* Custom delete validation modal */}
       {bookToDelete && (
-        <div id="delete-confirm-modal" className="fixed inset-0 bg-black/60 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-white dark:bg-[#181818] p-6 rounded-sm border border-black/10 dark:border-white/10 shadow-2xl animate-in zoom-in-95 duration-150">
-            <h4 className="font-sans font-bold text-[10px] uppercase tracking-[0.2em] text-red-500 mb-3">Delete Book Confirmation</h4>
-            <h3 className="font-serif font-semibold text-base text-[#111111] dark:text-neutral-100 italic leading-snug mb-2">
+        <div id="delete-confirm-modal" className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="w-full max-w-sm bg-white dark:bg-neutral-900 p-6 rounded-sm border border-black dark:border-white shadow-2xl animate-in zoom-in-95 duration-150 text-black dark:text-white">
+            <h4 className="font-sans font-bold text-[9px] uppercase tracking-[0.2em] text-black/60 dark:text-white/60 mb-3">Delete Book Confirmation</h4>
+            <h3 className="font-serif font-semibold text-base text-black dark:text-white italic leading-snug mb-2">
               "{bookToDelete.title}"
             </h3>
-            <p className="font-sans text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed mb-6">
+            <p className="font-sans text-xs text-black/70 dark:text-white/70 leading-relaxed mb-6">
               Are you sure you want to remove this book? This will permanently delete the text, all highlights, progress, and saved vocabulary local records.
             </p>
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setBookToDelete(null)}
                 id="btn-delete-cancel"
-                className="flex-1 py-2 rounded-sm border border-black/10 dark:border-white/10 text-[9px] uppercase tracking-[0.15em] font-sans font-bold text-neutral-600 dark:text-neutral-300 hover:bg-black/[0.03] dark:hover:bg-white/[0.03] transition-colors cursor-pointer"
+                className="flex-1 py-2 rounded-sm border border-black/20 dark:border-white/20 text-[9px] uppercase tracking-[0.15em] font-sans font-bold text-black/60 dark:text-white/60 hover:bg-black/5 dark:hover:bg-white/5 transition-all cursor-pointer"
               >
                 Keep Book
               </button>
@@ -315,7 +301,7 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
                   }
                 }}
                 id="btn-delete-confirm"
-                className="flex-1 py-1.5 rounded-sm bg-red-650 hover:bg-red-700 text-white text-[9px] uppercase tracking-[0.15em] font-sans font-bold transition-colors cursor-pointer"
+                className="flex-1 py-2 rounded-sm bg-black dark:bg-white text-white dark:text-black text-[9px] uppercase tracking-[0.15em] font-sans font-bold hover:bg-white hover:text-black dark:hover:bg-black dark:hover:text-white border border-black dark:border-white transition-all cursor-pointer"
               >
                 Delete
               </button>
@@ -323,13 +309,6 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
           </div>
         </div>
       )}
-
-      {/* Library branding footer */}
-      <div className="mt-20 border-t border-black/5 dark:border-white/5 pt-8 text-center select-none" id="lib-footer">
-        <p className="font-serif text-[13px] italic text-[#111111]/50 dark:text-white/50 max-w-lg mx-auto leading-relaxed">
-          “Of my grandfathers, teachers, and governors, I have learned simplicity in my way of living, simplicity of expression, and simple tools of beauty.”
-        </p>
-      </div>
     </div>
   );
 }

@@ -9,6 +9,24 @@ import ReaderView from "./components/reader/ReaderView";
 
 export default function App() {
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
+  const [theme, setTheme] = useState<string>(() => {
+    try {
+      const data = localStorage.getItem("epub-reader-settings");
+      if (data) {
+        return JSON.parse(data).theme || "dark";
+      }
+    } catch {}
+    return "dark";
+  });
+
+  // Keep root dark class in sync with theme state
+  useEffect(() => {
+    if (theme === "dark" || theme === "muted") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [theme]);
 
   // Monitor deep URL links or single-session resets
   useEffect(() => {
@@ -30,6 +48,16 @@ export default function App() {
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
+  // Re-sync theme when selectedBookId changes (so when returning from reader to library)
+  useEffect(() => {
+    try {
+      const data = localStorage.getItem("epub-reader-settings");
+      if (data) {
+        setTheme(JSON.parse(data).theme || "dark");
+      }
+    } catch {}
+  }, [selectedBookId]);
+
   const selectBook = (id: string | null) => {
     setSelectedBookId(id);
     const url = new URL(window.location.href);
@@ -42,7 +70,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-[#FAF9F7] dark:bg-[#111111] transition-colors duration-300">
+    <div className="min-h-screen bg-white dark:bg-black text-black dark:text-white transition-colors duration-300">
       {selectedBookId ? (
         <ReaderView
           bookId={selectedBookId}

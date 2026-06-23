@@ -18,24 +18,7 @@ import {
   deleteHighlight,
 } from "../../utils/db";
 import { parseEpub, loadChapterContent, ParsedBook, ParsedChapter } from "../../utils/epubParser";
-import {
-  ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
-  Sparkles,
-  BookOpen,
-  Bookmark,
-  Share2,
-  Trash2,
-  Type,
-  List,
-  Compass,
-  AlertCircle,
-  Check,
-  User,
-  Clock,
-  Loader
-} from "lucide-react";
+// No icons needed for text-only interface
 import SelectionMenu from "./SelectionMenu";
 import TypographyPanel from "./TypographyPanel";
 import AIResponsePopover from "./AIResponsePopover";
@@ -56,6 +39,16 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Page Navigation States
+  const [chapterPageIndex, setChapterPageIndex] = useState(0);
+  const [totalChapterPages, setTotalChapterPages] = useState(1);
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const [pendingPageAction, setPendingPageAction] = useState<"first" | "last" | "restore" | null>("restore");
+  const [suppressAnimation, setSuppressAnimation] = useState(true);
+  const [layoutSettled, setLayoutSettled] = useState(false);
+  const [showChapterBarPanel, setShowChapterBarPanel] = useState(false);
+  const [showChapterLines, setShowChapterLines] = useState(false);
+
   // Reader HUD Control States
   const [hudVisible, setHudVisible] = useState(true);
   const [showTypography, setShowTypography] = useState(false);
@@ -67,6 +60,58 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   // Reader Settings
   const [settings, setSettings] = useState<ReaderSettings>(getReaderSettings());
+
+  // Sync document root dark class list with theme setting
+  useEffect(() => {
+    if (settings.theme === "dark" || settings.theme === "muted") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+  }, [settings.theme]);
+
+  // Fullscreen State and change listeners
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    // Initial sync
+    handleFullscreenChange();
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+    };
+  }, []);
+
+  // Cleanup: exit fullscreen when leaving the reader view
+  useEffect(() => {
+    return () => {
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {});
+      }
+    };
+  }, []);
+
+  const handleGlobalClick = (e: React.MouseEvent) => {
+    // Avoid entering fullscreen when clicking controls or back button
+    const target = e.target as HTMLElement;
+    if (
+      target.closest("#btn-reader-back") || 
+      target.closest("#btn-close-typo") || 
+      target.closest("#btn-close-chapters") ||
+      target.closest("#typo-panel-sec") ||
+      target.closest("#chapters-drawer")
+    ) {
+      return;
+    }
+
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        console.warn("Fullscreen request blocked or failed:", err);
+      });
+    }
+  };
 
   // HUD disappear timers
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -96,6 +141,19 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const [toastTimeoutId, setToastTimeoutId] = useState<any>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const currentBookMetaRef = useRef(currentBookMeta);
+  useEffect(() => {
+    currentBookMetaRef.current = currentBookMeta;
+  }, [currentBookMeta]);
+
+  const activeChapterRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (showChapterBarPanel && activeChapterRef.current) {
+      requestAnimationFrame(() => {
+        activeChapterRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" });
+      });
+    }
+  }, [showChapterBarPanel, currentChapterIdx]);
 
   // Manage HUD show/hide timeouts
   const refreshHudTimeout = useCallback(() => {
@@ -211,29 +269,16 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     const loadChapter = async () => {
       try {
         setLoading(true);
+        setLayoutSettled(false);
+        setSuppressAnimation(true);
         const activeChapter = chapters[currentChapterIdx];
         
         // Load, rewrite images, scrape styles
         const html = await loadChapterContent(parsedBook.zipInstance, activeChapter.zipPath);
         setChapterContent(html);
 
-        // Scroll fully back to top on chapter transition
         if (containerRef.current) {
-          containerRef.current.scrollTop = 0;
-        }
-
-        // Save progress to IDB
-        if (currentBookMeta) {
-          const updatedMeta: Book = {
-            ...currentBookMeta,
-            lastOpenedAt: new Date().toISOString(),
-            progress: {
-              chapterIndex: currentChapterIdx,
-              scrollPercent: 0,
-            },
-          };
-          await saveBookMetadata(updatedMeta);
-          setCurrentBookMeta(updatedMeta);
+          containerRef.current.scrollLeft = 0;
         }
       } catch (e) {
         console.error("Failed to load chapter content:", e);
@@ -246,48 +291,21 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     loadChapter();
   }, [currentChapterIdx, parsedBook, chapters]);
 
-  // Restore Scroll Progress once chapter loads
-  useEffect(() => {
-    if (!loading && containerRef.current && currentBookMeta) {
-      const savedPercent = currentBookMeta.progress?.scrollPercent || 0;
-      if (savedPercent > 0 && currentBookMeta.progress.chapterIndex === currentChapterIdx) {
-        const timeout = setTimeout(() => {
-          if (containerRef.current) {
-            const container = containerRef.current;
-            container.scrollTop = (savedPercent / 100) * (container.scrollHeight - container.clientHeight);
-          }
-        }, 120);
-        return () => clearTimeout(timeout);
-      }
-    }
-  }, [loading, currentChapterIdx]);
-
-  // Scroll percent tracker & writer (debounced back to IndexDB space)
-  const handleScroll = () => {
-    // Hide HUD automatically upon starting scrolling to clear views
-    if (hudVisible) {
-      setHudVisible(false);
-    }
-
-    if (!containerRef.current || !currentBookMeta) return;
-
-    const container = containerRef.current;
-    if (container.scrollHeight - container.clientHeight <= 0) return;
-
-    const percent = (container.scrollTop / (container.scrollHeight - container.clientHeight)) * 100;
-
-    // Save scroll progress back to local memory dynamically (lazy persistent)
+  // Helper to save reading progress as percentage based on current page
+  const saveReadingProgress = (pageIdx: number, totalPages: number) => {
+    if (!currentBookMeta) return;
+    const percent = totalPages > 1 ? (pageIdx / (totalPages - 1)) * 100 : 0;
+    
     const updatedMeta: Book = {
       ...currentBookMeta,
+      lastOpenedAt: new Date().toISOString(),
       progress: {
         chapterIndex: currentChapterIdx,
         scrollPercent: Number(percent.toFixed(2)),
       },
     };
-    
-    // Save to local metadata ref
     setCurrentBookMeta(updatedMeta);
-    // Debounce save to database safely
+    
     const timeoutId = (window as any)._dbSaveTimeout;
     if (timeoutId) clearTimeout(timeoutId);
     (window as any)._dbSaveTimeout = setTimeout(() => {
@@ -295,73 +313,216 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }, 800);
   };
 
+  // Centralized page turning handlers
+  const handleNextPage = () => {
+    if (chapterPageIndex < totalChapterPages - 1) {
+      const nextP = chapterPageIndex + 1;
+      setSuppressAnimation(false);
+      setChapterPageIndex(nextP);
+      saveReadingProgress(nextP, totalChapterPages);
+    } else {
+      if (currentChapterIdx < chapters.length - 1) {
+        setSuppressAnimation(true);
+        setPendingPageAction("first");
+        setCurrentChapterIdx((prev) => prev + 1);
+      } else {
+        showToast("You have reached the end of the book.");
+      }
+    }
+  };
+
+  const handlePrevPage = () => {
+    if (chapterPageIndex > 0) {
+      const prevP = chapterPageIndex - 1;
+      setSuppressAnimation(false);
+      setChapterPageIndex(prevP);
+      saveReadingProgress(prevP, totalChapterPages);
+    } else {
+      if (currentChapterIdx > 0) {
+        setSuppressAnimation(true);
+        setPendingPageAction("last");
+        setCurrentChapterIdx((prev) => prev - 1);
+      } else {
+        showToast("You are at the very beginning of the book.");
+      }
+    }
+  };
+
+  // Recalculates horizontal scroll offset on window resize
+  const recalculatePages = useCallback(() => {
+    if (!containerRef.current) return;
+    setSuppressAnimation(true);
+    const container = containerRef.current;
+    const w = container.clientWidth;
+    const gap = 48;
+    if (w <= 0) return;
+
+    setViewportWidth(w);
+
+    const scrollWidth = container.scrollWidth;
+    const total = Math.max(1, Math.round((scrollWidth + gap) / (w + gap)));
+    setTotalChapterPages(total);
+
+    const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
+    const targetPage = Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
+    setChapterPageIndex(targetPage);
+
+    setTimeout(() => {
+      setSuppressAnimation(false);
+    }, 50);
+  }, []);
+
+  // Window resize handler
+  useEffect(() => {
+    const handleResize = () => {
+      setSuppressAnimation(true);
+      recalculatePages();
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [recalculatePages]);
+
+  // Recalculate pages and scroll position when chapter finishes loading or settings change
+  useEffect(() => {
+    if (loading || !chapterContent || !containerRef.current) return;
+
+    const timer = setTimeout(() => {
+      if (!containerRef.current) return;
+      const container = containerRef.current;
+      const w = container.clientWidth;
+      const gap = 48;
+      if (w <= 0) return;
+
+      setViewportWidth(w);
+
+      const scrollWidth = container.scrollWidth;
+      const total = Math.max(1, Math.round((scrollWidth + gap) / (w + gap)));
+      setTotalChapterPages(total);
+
+      let targetPage = chapterPageIndex;
+      if (pendingPageAction === "last") {
+        targetPage = total - 1;
+      } else if (pendingPageAction === "first") {
+        targetPage = 0;
+      } else {
+        const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
+        targetPage = Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
+      }
+
+      setChapterPageIndex(targetPage);
+      setPendingPageAction(null);
+      
+      // Save progress immediately
+      const percent = total > 1 ? (targetPage / (total - 1)) * 100 : 0;
+      const meta = currentBookMetaRef.current;
+      if (meta) {
+        const updatedMeta: Book = {
+          ...meta,
+          lastOpenedAt: new Date().toISOString(),
+          progress: {
+            chapterIndex: currentChapterIdx,
+            scrollPercent: Number(percent.toFixed(2)),
+          },
+        };
+        setCurrentBookMeta(updatedMeta);
+        saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
+      }
+
+      setLayoutSettled(true);
+      setTimeout(() => {
+        setSuppressAnimation(false);
+      }, 50);
+    }, 150);
+
+    return () => clearTimeout(timer);
+  }, [loading, chapterContent, pendingPageAction, settings, currentChapterIdx]);
+
   // Highlights injector implementation
   const getRenderHtml = () => {
-    if (!chapterContent) return "";
+    let content = chapterContent;
+    if (!content) return "";
     
     // Highlights applicable only for this chapter path
     const chapterHighlights = highlights.filter((h) => h.chapterIndex === currentChapterIdx);
-    if (chapterHighlights.length === 0) return chapterContent;
-
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(chapterContent, "text/html");
     
-    // Sort highlights from longest text to shortest
-    const sorted = [...chapterHighlights].sort((a, b) => b.text.length - a.text.length);
-    
-    const traverse = (node: Node) => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.textContent || "";
-        let parent = node.parentNode;
-        if (
-          !parent ||
-          parent.nodeName === "SCRIPT" ||
-          parent.nodeName === "STYLE" ||
-          (parent instanceof HTMLElement && parent.getAttribute("data-highlight-id"))
-        ) {
-          return;
-        }
-        
-        for (const h of sorted) {
-          const index = text.toLowerCase().indexOf(h.text.toLowerCase());
-          if (index !== -1) {
-            const beforeText = text.substring(0, index);
-            const matchText = text.substring(index, index + h.text.length);
-            const afterText = text.substring(index + h.text.length);
-            
-            const fragment = document.createDocumentFragment();
-            if (beforeText) {
-              fragment.appendChild(document.createTextNode(beforeText));
+    if (chapterHighlights.length > 0) {
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(content, "text/html");
+      
+      // Sort highlights from longest text to shortest
+      const sorted = [...chapterHighlights].sort((a, b) => b.text.length - a.text.length);
+      
+      const traverse = (node: Node) => {
+        if (node.nodeType === Node.TEXT_NODE) {
+          const text = node.textContent || "";
+          let parent = node.parentNode;
+          if (
+            !parent ||
+            parent.nodeName === "SCRIPT" ||
+            parent.nodeName === "STYLE" ||
+            (parent instanceof HTMLElement && parent.getAttribute("data-highlight-id"))
+          ) {
+            return;
+          }
+          
+          for (const h of sorted) {
+            const index = text.toLowerCase().indexOf(h.text.toLowerCase());
+            if (index !== -1) {
+              const beforeText = text.substring(0, index);
+              const matchText = text.substring(index, index + h.text.length);
+              const afterText = text.substring(index + h.text.length);
+              
+              const fragment = document.createDocumentFragment();
+              if (beforeText) {
+                fragment.appendChild(document.createTextNode(beforeText));
+              }
+              
+              const span = document.createElement("span");
+              span.className = `${h.color} cursor-pointer relative py-0.5 select-all hover:opacity-95 transition-opacity`;
+              span.setAttribute("data-highlight-id", h.id);
+              span.title = "Delete highlight";
+              span.appendChild(document.createTextNode(matchText));
+              fragment.appendChild(span);
+              
+              if (afterText) {
+                const remainingTextNode = document.createTextNode(afterText);
+                fragment.appendChild(remainingTextNode);
+                // Traverse subsequent text nodes
+                traverse(remainingTextNode);
+              }
+              
+              parent.replaceChild(fragment, node);
+              break;
             }
-            
-            const span = document.createElement("span");
-            span.className = `${h.color} cursor-pointer relative py-0.5 select-all hover:opacity-95 transition-opacity`;
-            span.setAttribute("data-highlight-id", h.id);
-            span.title = "Delete highlight";
-            span.appendChild(document.createTextNode(matchText));
-            fragment.appendChild(span);
-            
-            if (afterText) {
-              const remainingTextNode = document.createTextNode(afterText);
-              fragment.appendChild(remainingTextNode);
-              // Traverse subsequent text nodes
-              traverse(remainingTextNode);
-            }
-            
-            parent.replaceChild(fragment, node);
-            break;
+          }
+        } else {
+          const children = Array.from(node.childNodes);
+          for (const child of children) {
+            traverse(child);
           }
         }
-      } else {
-        const children = Array.from(node.childNodes);
-        for (const child of children) {
-          traverse(child);
-        }
-      }
-    };
-    
-    traverse(doc.body);
-    return doc.body.innerHTML;
+      };
+      
+      traverse(doc.body);
+      content = doc.body.innerHTML;
+    }
+
+    // Prepend custom front cover header inside the columns for chapter 0
+    if (currentChapterIdx === 0 && parsedBook) {
+      const coverHtml = `
+        <div class="mb-10 pb-6 border-b border-black/10 dark:border-white/10 text-center select-none animate-in fade-in duration-300" style="break-inside: avoid-column; break-after: auto;" id="book-front-cover">
+          <h1 class="font-serif font-bold text-3xl md:text-4xl my-2 text-center leading-tight border-none pb-0">
+            ${parsedBook.title}
+          </h1>
+          <p class="font-sans text-[10px] uppercase tracking-widest text-black/50 dark:text-white/50 font-bold mb-8">
+            by ${parsedBook.author}
+          </p>
+        </div>
+      `;
+      content = coverHtml + content;
+    }
+
+    return content;
   };
 
   // Handle direct click on highlights within the XHTML document to delete them
@@ -512,12 +673,17 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         return;
       }
 
+      // Automatically request fullscreen on reading navigation keyboard interaction
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      }
+
       if (e.key === "ArrowLeft") {
         e.preventDefault();
-        navigateChapter(-1);
+        handlePrevPage();
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
-        navigateChapter(1);
+        handleNextPage();
       } else if (e.key === "t" || e.key === "T") {
         // Toggle settings
         e.preventDefault();
@@ -531,12 +697,13 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showTypography, showChapterIndex, aiState.visible, currentChapterIdx, chapters]);
+  }, [showTypography, showChapterIndex, aiState.visible, currentChapterIdx, chapters, chapterPageIndex, totalChapterPages]);
 
   // Navigate chapters helpers
   const navigateChapter = (dir: number) => {
     const target = currentChapterIdx + dir;
     if (target >= 0 && target < chapters.length) {
+      setSuppressAnimation(true);
       setCurrentChapterIdx(target);
     } else if (target < 0) {
       showToast("You are at the very beginning of the book.");
@@ -576,6 +743,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   // Change font sizes helper
   const handleSettingsChange = (newSettings: ReaderSettings) => {
+    setSuppressAnimation(true);
     setSettings(newSettings);
     saveReaderSettings(newSettings);
   };
@@ -584,32 +752,21 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const getThemeClass = (t: ReaderTheme) => {
     switch (t) {
       case "light":
-        return {
-          wrapper: "bg-[#FAF9F7] text-[#111111]",
-          card: "bg-white text-[#111111] border border-black/10 rounded-sm shadow-xl",
-          header: "border-black/5 bg-[#FAF9F7]/90 text-[#111111]",
-          footer: "border-black/5 bg-[#FAF9F7]/90 text-[#111111]",
-        };
       case "warm":
         return {
-          wrapper: "bg-[#F4F0EA] text-[#2e2620]",
-          card: "bg-[#eae2d5] text-[#2e2620] border border-black/10 rounded-sm shadow-xl",
-          header: "border-black/5 bg-[#F4F0EA]/90 text-[#2e2620]",
-          footer: "border-black/5 bg-[#F4F0EA]/90 text-[#2e2620]",
-        };
-      case "muted":
-        return {
-          wrapper: "bg-[#2D3136] text-[#E3E3E3]",
-          card: "bg-[#222529] text-[#E3E3E3] border border-white/5 rounded-sm shadow-xl",
-          header: "border-white/5 bg-[#2D3136]/90 text-[#E3E3E3]",
-          footer: "border-white/5 bg-[#2D3136]/90 text-[#E3E3E3]",
+          wrapper: "bg-white text-black",
+          card: "bg-white text-black border border-black/10 rounded-sm shadow-md",
+          header: "border-black/10 bg-white/95 text-black",
+          footer: "border-black/10 bg-white/95 text-black",
         };
       case "dark":
+      case "muted":
+      default:
         return {
-          wrapper: "bg-[#111111] text-[#EAEAEA]",
-          card: "bg-[#181818] text-[#EAEAEA] border border-white/10 rounded-sm shadow-xl",
-          header: "border-white/5 bg-[#111111]/90 text-[#EAEAEA]",
-          footer: "border-white/5 bg-[#111111]/90 text-[#EAEAEA]",
+          wrapper: "bg-black text-white",
+          card: "bg-neutral-900 text-white border border-white/10 rounded-sm shadow-md",
+          header: "border-white/10 bg-black/95 text-white",
+          footer: "border-white/10 bg-black/95 text-white",
         };
     }
   };
@@ -629,23 +786,21 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   if (loading && !chapterContent) {
     return (
-      <div className="w-full h-screen flex flex-col items-center justify-center bg-stone-50 dark:bg-neutral-900" id="read-loader">
-        <Loader className="w-8 h-8 animate-spin text-neutral-400 mb-3" />
-        <p className="text-xs font-sans text-neutral-400 uppercase tracking-widest font-semibold">Opening local reader workspace...</p>
+      <div className="w-full h-screen flex flex-col items-center justify-center bg-white dark:bg-black text-black dark:text-white" id="read-loader">
+        <p className="text-[10px] font-sans uppercase tracking-widest font-bold animate-pulse">Opening reader workspace...</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="w-full h-screen flex flex-col items-center justify-center p-6 bg-stone-50 dark:bg-neutral-900 text-center" id="read-error">
-        <AlertCircle className="w-12 h-12 text-red-500 mb-3" />
-        <h3 className="font-sans font-bold text-lg mb-1">Could not initialize book</h3>
-        <p className="text-sm text-neutral-500 max-w-sm mb-6">{error}</p>
+      <div className="w-full h-screen flex flex-col items-center justify-center p-6 bg-white dark:bg-black text-center text-black dark:text-white" id="read-error">
+        <h3 className="font-serif italic text-xl mb-2">Could not initialize book</h3>
+        <p className="text-xs text-black/60 dark:text-white/60 max-w-sm mb-6 leading-relaxed">{error}</p>
         <button
           onClick={onBackToLibrary}
           id="btn-back-err"
-          className="px-5 py-2.5 bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl font-sans text-sm font-semibold cursor-pointer"
+          className="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-sm border border-black dark:border-white font-sans text-[10px] uppercase tracking-widest font-bold hover:bg-white hover:text-black dark:hover:bg-black dark:hover:text-white transition-all cursor-pointer"
         >
           Return to Library
         </button>
@@ -655,10 +810,16 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   const themeStyle = getThemeClass(settings.theme);
   const activeChapter = chapters[currentChapterIdx];
+  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
+  const columnCount = settings.viewMode === "split" && !isMobile ? 2 : 1;
+  const viewportMaxWidthStr = isMobile ? "calc(100vw - 32px)" : "calc(100vw - 96px)";
+  const viewportTopClass = isFullscreen ? "top-6" : "top-16";
+  const viewportBottomClass = isFullscreen ? "bottom-6" : "bottom-12";
 
   return (
     <div
       onMouseMove={handleMouseMove}
+      onClick={handleGlobalClick}
       id="reader-hud-root"
       className={`relative w-full h-screen overflow-hidden select-text transition-colors duration-300 ${themeStyle.wrapper}`}
     >
@@ -673,36 +834,34 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           <button
             onClick={onBackToLibrary}
             id="btn-reader-back"
-            className="group flex items-center gap-2 text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white transition-colors cursor-pointer"
+            className="group flex items-center gap-1.5 text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white transition-colors cursor-pointer font-bold font-sans text-[10px] uppercase tracking-[0.2em]"
             title="Library Catalog"
           >
-            <ArrowLeft className="w-4 h-4 stroke-[1.5]" />
-            <span className="text-[10px] uppercase tracking-[0.2em] font-sans font-bold hidden md:inline">Library</span>
+            <span>← Library</span>
           </button>
           
-          <div className="h-4 w-px bg-black/10 dark:bg-white/10 hidden md:block"></div>
+          <div className="h-4 w-px bg-black/10 dark:bg-white/10"></div>
 
           <div>
-            <h4 className="font-serif font-semibold text-xs max-w-[150px] md:max-w-[320px] truncate leading-tight italic">
+            <h4 className="font-serif font-bold text-xs max-w-[150px] md:max-w-[320px] truncate leading-tight italic">
               {parsedBook?.title}
             </h4>
-            <p className="font-sans text-[9px] text-black/40 dark:text-white/40 uppercase tracking-[0.2em] font-semibold mt-0.5">
+            <p className="font-sans text-[8px] text-black/45 dark:text-white/45 uppercase tracking-[0.2em] font-semibold mt-0.5">
               {activeChapter ? activeChapter.title : "Chapter Description"}
             </p>
           </div>
         </div>
 
-        {/* Action icons Row */}
-        <div className="flex items-center gap-3">
+        {/* Action buttons Row */}
+        <div className="flex items-center gap-2">
           {/* AI Page Summary Spark button */}
           <button
             onClick={handleSummarizeChapter}
             id="btn-reader-summarize"
             title="Summarize chapter [Key: S]"
-            className="px-3 py-1.5 rounded-sm border border-black/10 dark:border-white/10 text-black/80 dark:text-white/80 bg-black/5 dark:bg-white/5 text-[9px] uppercase tracking-[0.15em] font-sans font-bold flex items-center gap-1.5 transition-all hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer"
+            className="px-2.5 py-1.5 rounded-sm border border-black/10 dark:border-white/10 text-black/80 dark:text-white/80 text-[9px] uppercase tracking-[0.15em] font-sans font-bold hover:border-black dark:hover:border-white transition-all cursor-pointer"
           >
-            <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-            <span className="hidden md:inline">Summarize</span>
+            <span>Summarize</span>
           </button>
 
           <button
@@ -712,11 +871,13 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
             }}
             id="btn-reader-toc"
             title="Chapters list [Key: I]"
-            className={`p-2 rounded-sm transition-colors cursor-pointer ${
-              showChapterIndex ? "bg-black/5 dark:bg-white/10 text-[#111111] dark:text-white" : "hover:bg-black/5 dark:hover:bg-white/5 text-black/60 dark:text-white/60"
+            className={`px-2.5 py-1.5 rounded-sm border text-[9px] uppercase tracking-[0.15em] font-sans font-bold transition-all cursor-pointer ${
+              showChapterIndex
+                ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black"
+                : "border-black/10 dark:border-white/10 text-black/60 dark:text-white/60 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white"
             }`}
           >
-            <List className="w-4 h-4" />
+            Index
           </button>
 
           <button
@@ -726,11 +887,13 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
             }}
             id="btn-reader-typo"
             title="Typography settings [Key: T]"
-            className={`p-2 rounded-sm transition-colors cursor-pointer ${
-              showTypography ? "bg-black/5 dark:bg-white/10 text-[#111111] dark:text-white" : "hover:bg-black/5 dark:hover:bg-white/5 text-black/60 dark:text-white/60"
+            className={`px-2.5 py-1.5 rounded-sm border text-[9px] uppercase tracking-[0.15em] font-sans font-bold transition-all cursor-pointer ${
+              showTypography
+                ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black"
+                : "border-black/10 dark:border-white/10 text-black/60 dark:text-white/60 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white"
             }`}
           >
-            <Type className="w-4 h-4" />
+            Settings
           </button>
         </div>
       </div>
@@ -749,8 +912,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       {showChapterIndex && (
         <div className="absolute top-18 right-6 z-50 w-full max-w-sm rounded-sm shadow-2xl border border-black/10 dark:border-white/10 backdrop-blur-md bg-white/95 dark:bg-neutral-900/95 max-h-[75vh] flex flex-col p-6 animate-in fade-in zoom-in-95 duration-150" id="chapters-drawer">
           <div className="flex items-center justify-between mb-4 border-b pb-2 border-black/5 dark:border-white/5">
-            <span className="font-sans font-bold text-[10px] uppercase tracking-[0.2em] text-black/60 dark:text-white/60 flex items-center gap-1.5">
-              <Compass className="w-4 h-4 text-neutral-400" />
+            <span className="font-sans font-bold text-[10px] uppercase tracking-[0.2em] text-black/60 dark:text-white/60">
               <span>Chapters Index</span>
             </span>
             <button
@@ -767,17 +929,18 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
                 key={ch.id}
                 id={`btn-chapter-select-${idx}`}
                 onClick={() => {
+                  setSuppressAnimation(true);
                   setCurrentChapterIdx(idx);
                   setShowChapterIndex(false);
                 }}
-                className={`w-full text-left p-2.5 rounded-sm transition-colors flex items-center justify-between cursor-pointer ${
+                className={`w-full text-left p-2 rounded-sm transition-colors flex items-center justify-between cursor-pointer ${
                   idx === currentChapterIdx
-                    ? "bg-[#111111] dark:bg-white text-white dark:text-[#111111] font-bold"
-                    : "text-neutral-700 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/5"
+                    ? "bg-black dark:bg-white text-white dark:text-black font-bold"
+                    : "text-neutral-750 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/5"
                 }`}
               >
                 <span className="truncate mr-3">{ch.title}</span>
-                {idx === currentChapterIdx && <Check className="w-3.5 h-3.5" />}
+                {idx === currentChapterIdx && <span className="text-[8px] uppercase tracking-wider font-bold opacity-60">(Active)</span>}
               </button>
             ))}
           </div>
@@ -805,31 +968,28 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         onAction={handleSelectionAction}
         onClose={() => setSelectionActive(false)}
       />
-
       {/* 5. Clean Reader Column stage */}
       <div
         ref={containerRef}
-        onScroll={handleScroll}
         id="reader-scroll-viewport"
-        className="w-full h-full overflow-y-auto pt-24 pb-20 no-scrollbar"
+        style={{
+          width: viewportMaxWidthStr,
+        }}
+        className={`absolute left-1/2 -translate-x-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar transition-all duration-300 ${viewportTopClass} ${viewportBottomClass}`}
       >
         <div
-          style={{ maxWidth: `${settings.contentWidth}px` }}
-          className="mx-auto px-6 md:px-8 py-4 relative"
+          style={{
+            width: "100%",
+            maxWidth: "100%",
+            transform: `translate3d(-${chapterPageIndex * (viewportWidth + 48)}px, 0, 0)`,
+            transition: suppressAnimation 
+              ? "opacity 0.15s ease-in-out" 
+              : "transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease-in-out",
+            opacity: (loading || !layoutSettled) ? 0 : 1,
+          }}
+          className="mx-auto px-0 h-full py-2 relative"
           id="reader-column"
         >
-          {/* Book Header title segment */}
-          {currentChapterIdx === 0 && (
-            <div className="mb-14 pb-8 border-b border-neutral-100 dark:border-neutral-850/60 text-center select-none" id="book-front-cover">
-              <h1 className="font-serif font-black text-3.5xl md:text-5xl my-4 text-center leading-tight">
-                {parsedBook?.title}
-              </h1>
-              <p className="font-sans text-xs uppercase tracking-widest text-neutral-400 dark:text-neutral-500 font-bold mb-14">
-                by {parsedBook?.author}
-              </p>
-            </div>
-          )}
-
           {/* Core Chapter HTML body render (Premium custom typographies binding) */}
           <div
             id="reader-chapter-body"
@@ -837,81 +997,163 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
             style={{
               fontSize: `${settings.fontSize}px`,
               lineHeight: settings.lineHeight,
+              fontFamily: settings.fontFamily === "Source Serif" ? "'Source Serif 4', Georgia, serif" : `'${settings.fontFamily}', Georgia, serif`,
+              columnCount: columnCount,
+              columnGap: "48px",
+              height: "100%",
+              columnFill: "auto",
             }}
-            className={`epub-content select-text font-serif leading-relaxed text-left antialiased focus:outline-none transition-all ${getFontClass(settings.fontFamily)}`}
+            className={`epub-content select-text font-serif leading-relaxed text-left antialiased focus:outline-none h-full`}
             dangerouslySetInnerHTML={{ __html: getRenderHtml() }}
           />
 
-          {/* End of chapter pagination buttons inside reading surface */}
-          <div className="mt-16 pt-8 border-t border-neutral-100 dark:border-neutral-850/50 flex items-center justify-between select-none" id="reader-nav-footer">
-            <button
-              onClick={() => navigateChapter(-1)}
-              id="btn-footer-prev"
-              disabled={currentChapterIdx === 0}
-              className="flex items-center gap-1.5 py-2.5 px-4 rounded-xl hover:bg-neutral-500/10 disabled:opacity-20 text-xs font-sans font-bold uppercase transition-all cursor-pointer"
-            >
-              <ChevronLeft className="w-4 h-4" />
-              <span>Prev Chapter</span>
-            </button>
-            
-            <span className="font-sans text-xs font-bold text-neutral-400 dark:text-neutral-500 uppercase tracking-widest">
-              Chapter {currentChapterIdx + 1} of {chapters.length}
-            </span>
-
-            <button
-              onClick={() => navigateChapter(1)}
-              id="btn-footer-next"
-              disabled={currentChapterIdx === chapters.length - 1}
-              className="flex items-center gap-1.5 py-2.5 px-4 rounded-xl hover:bg-neutral-500/10 disabled:opacity-20 text-xs font-sans font-bold uppercase transition-all cursor-pointer"
-            >
-              <span>Next Chapter</span>
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
         </div>
       </div>
 
       {/* 6. Marginally subtle sidebar clickable columns to navigate (Invisible) */}
       <div
-        onClick={() => navigateChapter(-1)}
+        onClick={handlePrevPage}
         id="side-prev-hotspot"
         className="absolute top-16 bottom-12 left-0 w-8 md:w-16 flex items-center justify-start pl-2 z-10 cursor-w-resize opacity-0 hover:opacity-15 text-neutral-400 transition-opacity"
-        title="Previous Chapter"
+        title="Previous Page"
       >
-        <ChevronLeft className="w-8 h-8 hidden md:block" />
+        <span className="hidden md:block">←</span>
       </div>
 
       <div
-        onClick={() => navigateChapter(1)}
+        onClick={handleNextPage}
         id="side-next-hotspot"
         className="absolute top-16 bottom-12 right-0 w-8 md:w-16 flex items-center justify-end pr-2 z-10 cursor-e-resize opacity-0 hover:opacity-15 text-neutral-400 transition-opacity"
-        title="Next Chapter"
+        title="Next Page"
       >
-        <ChevronRight className="w-8 h-8 hidden md:block" />
+        <span className="hidden md:block">→</span>
       </div>
 
-      {/* 7. Footer bottom Progress bar HUD (Disappears on silence) */}
+      {/* 8. Custom Right Edge Chapter Scrollbar & Hover Drawer */}
+      {chapters.length > 1 && (
+        <div
+          className={`fixed right-0 top-1/2 -translate-y-1/2 z-50 flex items-center pr-2 transition-all duration-300 ${
+            showChapterBarPanel ? "pl-80 py-10" : "pl-10 py-10"
+          }`}
+          onMouseEnter={() => setShowChapterLines(true)}
+          onMouseLeave={() => {
+            setShowChapterLines(false);
+            setShowChapterBarPanel(false);
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Hover panel (chapter titles list) */}
+          <div
+            className={`mr-3 w-72 max-h-[60vh] overflow-y-auto rounded-xl p-3 shadow-2xl border transition-all duration-300 no-scrollbar ${
+              showChapterBarPanel
+                ? "opacity-100 translate-x-0 pointer-events-auto"
+                : "opacity-0 translate-x-4 pointer-events-none"
+            } ${
+              settings.theme === "dark" || settings.theme === "muted"
+                ? "bg-neutral-900/90 border-neutral-800 text-white"
+                : "bg-white/90 border-neutral-200 text-black"
+            }`}
+          >
+            <div className="space-y-1 font-sans">
+              {chapters.map((ch, idx) => (
+                <button
+                  key={ch.id}
+                  ref={idx === currentChapterIdx ? activeChapterRef : null}
+                  onClick={() => {
+                    setSuppressAnimation(true);
+                    setCurrentChapterIdx(idx);
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-xs truncate transition-all cursor-pointer ${
+                    idx === currentChapterIdx
+                      ? (settings.theme === "dark" || settings.theme === "muted"
+                          ? "bg-white/10 text-white font-bold"
+                          : "bg-black/10 text-black font-bold")
+                      : "opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5"
+                  }`}
+                >
+                  {ch.title}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Scrollbar lines column */}
+          <div
+            className={`flex flex-col items-center justify-between py-2 px-1 cursor-pointer transition-all duration-300 ${
+              showChapterLines ? "opacity-100 translate-x-0" : "opacity-0 translate-x-2 pointer-events-none"
+            }`}
+            style={{ height: `${Math.min(350, chapters.length * 12)}px` }}
+            onMouseEnter={() => setShowChapterBarPanel(true)}
+          >
+            {chapters.map((_, idx) => (
+              <div
+                key={idx}
+                onClick={() => {
+                  setSuppressAnimation(true);
+                  setCurrentChapterIdx(idx);
+                }}
+                className={`h-[2px] transition-all duration-200 rounded-full ${
+                  idx === currentChapterIdx
+                    ? "w-6 bg-black dark:bg-white"
+                    : "w-3 bg-neutral-400 dark:bg-neutral-600 opacity-60 hover:opacity-100 hover:w-5"
+                }`}
+                title={`Jump to Chapter ${idx + 1}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 7. Combined Unified Footer HUD (Disappears on silence) */}
       <div
-        id="reader-hud-footer"
-        className={`absolute bottom-0 left-0 right-0 h-12 border-t flex items-center justify-between px-6 z-40 backdrop-blur-sm shadow-inner text-xs font-sans font-semibold text-neutral-400 dark:text-neutral-500 transition-all duration-300 ${
+        id="reader-footer"
+        className={`absolute bottom-0 left-0 right-0 h-12 border-t flex items-center justify-between px-6 z-40 backdrop-blur-sm transition-all duration-300 ${
           hudVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3 pointer-events-none"
         } ${themeStyle.footer}`}
       >
-        <div className="flex items-center gap-2">
-          <Clock className="w-3.5 h-3.5 text-neutral-400" />
-          <span>Chapter {currentChapterIdx + 1}</span>
-        </div>
-        
-        {/* Central percentage indicator */}
-        <div className="w-1/3 md:w-1/4 h-1.5 bg-neutral-200/50 dark:bg-neutral-800/40 rounded-full overflow-hidden max-w-xs block mx-auto">
+        {/* Thin reading progress bar line at the top border of the footer */}
+        <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-black/5 dark:bg-white/5 overflow-hidden">
           <div
-            className="h-full bg-neutral-900 dark:bg-white rounded-full transition-all duration-150"
+            className="h-full bg-black dark:bg-white transition-all duration-150"
             style={{ width: `${currentBookMeta?.progress?.scrollPercent || 0}%` }}
           />
         </div>
 
-        <div>
-          <span>{currentBookMeta?.progress ? Math.round(currentBookMeta.progress.scrollPercent) : 0}% Read</span>
+        {/* Left Column: Prev navigation */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handlePrevPage}
+            id="btn-footer-prev"
+            disabled={currentChapterIdx === 0 && chapterPageIndex === 0}
+            className="text-[10px] uppercase tracking-[0.2em] font-sans font-bold text-black/50 hover:text-black dark:text-white/50 dark:hover:text-white disabled:opacity-20 transition-colors cursor-pointer"
+          >
+            Prev
+          </button>
+          <span className="hidden sm:inline text-[9px] uppercase tracking-[0.15em] font-sans font-semibold text-neutral-400/80 dark:text-neutral-500/80 select-none">
+            • Chapter {currentChapterIdx + 1}
+          </span>
+        </div>
+
+        {/* Center Column: Clean X of Y page indicator (Muted gray sans-serif font) */}
+        <div className="flex flex-col items-center justify-center">
+          <span className="font-sans text-[13px] md:text-[14px] font-normal text-neutral-400 dark:text-neutral-500 tracking-wide select-none">
+            {chapterPageIndex + 1} of {totalChapterPages}
+          </span>
+        </div>
+
+        {/* Right Column: Next navigation & percentage */}
+        <div className="flex items-center gap-3">
+          <span className="hidden sm:inline text-[9px] uppercase tracking-[0.15em] font-sans font-semibold text-neutral-400/80 dark:text-neutral-500/80 select-none">
+            {currentBookMeta?.progress ? Math.round(currentBookMeta.progress.scrollPercent) : 0}% Read •
+          </span>
+          <button
+            onClick={handleNextPage}
+            id="btn-footer-next"
+            disabled={currentChapterIdx === chapters.length - 1 && chapterPageIndex === totalChapterPages - 1}
+            className="text-[10px] uppercase tracking-[0.2em] font-sans font-bold text-black/50 hover:text-black dark:text-white/50 dark:hover:text-white disabled:opacity-20 transition-colors cursor-pointer"
+          >
+            Next
+          </button>
         </div>
       </div>
 
@@ -919,11 +1161,10 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       {notification && (
         <div
           id="toast-notification"
-          className="fixed bottom-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-xl border border-neutral-200/55 dark:border-neutral-800/60 bg-white/95 dark:bg-neutral-900/95 shadow-lg text-xs font-sans flex items-center justify-between gap-6 select-none animate-in fade-in slide-in-from-bottom-2 duration-150"
+          className="fixed bottom-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-sm border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 shadow-xl text-[10px] font-sans font-bold uppercase tracking-wider flex items-center justify-between gap-6 select-none animate-in fade-in slide-in-from-bottom-2 duration-150"
         >
-          <div className="flex items-center gap-1.5 font-semibold">
-            <div className="w-2 h-2 rounded-full bg-neutral-900 dark:bg-white" />
-            <span className="text-neutral-800 dark:text-neutral-200">{notification.text}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-black dark:text-white">{notification.text}</span>
           </div>
           {notification.onUndo && (
             <button
@@ -933,7 +1174,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
                 }
                 setNotification(null);
               }}
-              className="text-[#654321] dark:text-neutral-300 font-bold uppercase tracking-[0.1em] text-[9px] hover:underline cursor-pointer border-l border-black/10 dark:border-white/10 pl-2.5"
+              className="text-black dark:text-white font-bold hover:underline cursor-pointer border-l border-black/15 dark:border-white/15 pl-2.5"
             >
               Undo
             </button>

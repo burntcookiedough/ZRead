@@ -55,4 +55,5 @@ export interface ReaderSettings {
   fontSize: number; // 14 to 28 px
   lineHeight: number; // 1.5 to 2.2
   contentWidth: number; // 600 to 900 px
+  viewMode: "single" | "split";
 }

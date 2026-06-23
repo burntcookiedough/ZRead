@@ -174,10 +174,10 @@ export async function loadChapterContent(
   const parser = new DOMParser();
   const doc = parser.parseFromString(rawText, "text/html");
 
-  // Iterate and rewrite <img> tags so we load localized file asset URLs
-  const imgElements = doc.querySelectorAll("img");
+  // Iterate and rewrite <img> and SVG <image> tags so we load localized file asset URLs
+  const imgElements = doc.querySelectorAll("img, image");
   for (const img of Array.from(imgElements)) {
-    const src = img.getAttribute("src");
+    const src = img.getAttribute("src") || img.getAttribute("href") || img.getAttribute("xlink:href");
     if (src) {
       // Decode URL paths, handling %20 etc.
       const decodedSrc = decodeURI(src);
@@ -189,7 +189,12 @@ export async function loadChapterContent(
         try {
           const blob = await imgFile.async("blob");
           const localUrl = URL.createObjectURL(blob);
-          img.setAttribute("src", localUrl);
+          if (img.tagName.toLowerCase() === "img") {
+            img.setAttribute("src", localUrl);
+          } else {
+            img.setAttribute("href", localUrl);
+            img.setAttribute("xlink:href", localUrl);
+          }
           
           // Add custom elegant sizing and styles to inline content assets
           img.className = "max-w-full h-auto mx-auto my-6 rounded shadow-sm opacity-90 transition-opacity hover:opacity-100";
@@ -204,6 +209,34 @@ export async function loadChapterContent(
       }
     }
   }
+
+  // Prevent SVG elements (especially cover pages) from stretching
+  const svgElements = doc.querySelectorAll("svg");
+  svgElements.forEach((svg) => {
+    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+    
+    const width = svg.getAttribute("width");
+    const height = svg.getAttribute("height");
+    const viewBox = svg.getAttribute("viewBox");
+    
+    if (!viewBox && width && height) {
+      const wVal = parseFloat(width);
+      const hVal = parseFloat(height);
+      if (!isNaN(wVal) && !isNaN(hVal)) {
+        svg.setAttribute("viewBox", `0 0 ${wVal} ${hVal}`);
+      }
+    }
+    
+    svg.removeAttribute("width");
+    svg.removeAttribute("height");
+    
+    svg.style.maxWidth = "100%";
+    svg.style.maxHeight = "75vh";
+    svg.style.width = "auto";
+    svg.style.height = "auto";
+    svg.style.display = "block";
+    svg.style.margin = "auto";
+  });
 
   // Clean links, make internal anchors open in a custom way or disable
   const links = doc.querySelectorAll("a");
@@ -229,6 +262,16 @@ export async function loadChapterContent(
   // Remove any raw style tags so they don't break our theme styling
   const styleTags = body.querySelectorAll("style, link[rel='stylesheet']");
   styleTags.forEach((tag) => tag.remove());
+
+  // Clean inline styles to allow typography panel overrides
+  const styledElements = body.querySelectorAll("[style]");
+  styledElements.forEach((el) => {
+    const align = (el as HTMLElement).style.textAlign;
+    el.removeAttribute("style");
+    if (align) {
+      (el as HTMLElement).style.textAlign = align;
+    }
+  });
 
   return body.innerHTML;
 }

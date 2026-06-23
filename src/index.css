@@ -16,7 +16,9 @@ body {
 
 /* Reader Typography Render Blocks */
 .epub-content {
-  /* Control specific paragraph layouts */
+  column-gap: 48px;
+  height: 100%;
+  column-fill: auto;
 }
 
 .epub-content p {
@@ -24,6 +26,18 @@ body {
   margin-bottom: 1.25em;
   text-indent: 0;
   line-height: inherit;
+}
+
+.epub-content img,
+.epub-content svg,
+.epub-content image {
+  max-height: 70vh;
+  max-width: 100%;
+  object-fit: contain;
+  display: block;
+  margin: 1em auto;
+  break-inside: avoid-column;
+  filter: grayscale(100%) contrast(1.15);
 }
 
 /* Common epub paragraph indent first line pattern if desired, but we prefer clean spacing as requested: "clean paragraph spacing" */
@@ -41,13 +55,15 @@ body {
   font-weight: 600;
   letter-spacing: -0.02em;
   line-height: 1.25;
-  margin-top: 2em;
-  margin-bottom: 0.75em;
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  break-inside: avoid-column;
+  break-after: avoid-column;
 }
 
 .epub-content h1 {
   font-size: 2em;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
   padding-bottom: 0.3em;
 }
 
@@ -85,30 +101,25 @@ body {
   margin-bottom: 0.5em;
 }
 
-/* Custom Highlight colors to layer over dark or light themes smoothly */
-.custom-highlight-yellow {
-  background-color: rgba(253, 224, 71, 0.4); /* Tailwind yellow-300 with transparency */
-  border-radius: 2px;
+/* Custom Black & White Highlight styles */
+.custom-highlight-underline {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
 }
 
-.custom-highlight-green {
-  background-color: rgba(134, 239, 172, 0.4); /* Tailwind green-300 with transparency */
-  border-radius: 2px;
+.custom-highlight-dotted {
+  text-decoration: underline dotted;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
 }
 
-.custom-highlight-blue {
-  background-color: rgba(147, 197, 253, 0.4); /* Tailwind blue-300 with transparency */
+.custom-highlight-gray {
+  background-color: rgba(0, 0, 0, 0.1);
   border-radius: 2px;
 }
-
-.custom-highlight-purple {
-  background-color: rgba(216, 180, 254, 0.4); /* Tailwind purple-300 with transparency */
-  border-radius: 2px;
-}
-
-.custom-highlight-pink {
-  background-color: rgba(244, 180, 220, 0.4); /* Pink with transparency */
-  border-radius: 2px;
+.dark .custom-highlight-gray {
+  background-color: rgba(255, 255, 255, 0.2);
 }
 
 /* Invisible custom scrollbar for absolute immersion when reading, still scrollable */

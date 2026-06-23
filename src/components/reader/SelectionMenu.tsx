@@ -4,7 +4,7 @@
  */
 
 import { useEffect, useState, useRef } from "react";
-import { Sparkles, Bookmark, Highlighter, Trash2 } from "lucide-react";
+// No icons needed for text-only menu
 
 interface SelectionMenuProps {
   onAction: (action: "define" | "explain" | "save" | "highlight", extra?: string) => void;
@@ -16,12 +16,10 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
   const [selectedText, setSelectedText] = useState("");
   const menuRef = useRef<HTMLDivElement>(null);
 
-  const colors = [
-    { value: "bg-yellow-250", label: "Yellow", class: "custom-highlight-yellow", colorHex: "rgba(253, 224, 71, 0.4)" },
-    { value: "bg-green-250", label: "Green", class: "custom-highlight-green", colorHex: "rgba(134, 239, 172, 0.4)" },
-    { value: "bg-blue-250", label: "Blue", class: "custom-highlight-blue", colorHex: "rgba(147, 197, 253, 0.4)" },
-    { value: "bg-purple-250", label: "Purple", class: "custom-highlight-purple", colorHex: "rgba(216, 180, 254, 0.4)" },
-    { value: "bg-pink-250", label: "Pink", class: "custom-highlight-pink", colorHex: "rgba(244, 180, 220, 0.4)" },
+  const highlightStyles = [
+    { label: "Underline", class: "custom-highlight-underline" },
+    { label: "Dotted", class: "custom-highlight-dotted" },
+    { label: "Gray", class: "custom-highlight-gray" },
   ];
 
   useEffect(() => {
@@ -101,8 +99,8 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
         onAction("save");
       } else if (key === "h") {
         e.preventDefault();
-        // Default highlight to yellow
-        onAction("highlight", "custom-highlight-yellow");
+        // Default highlight to underline
+        onAction("highlight", "custom-highlight-underline");
       }
     };
 
@@ -170,20 +168,22 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
 
       <div className="w-px h-3 bg-black/10 dark:bg-white/10" />
 
-      {/* Highlighter palettes */}
+      {/* Highlighter styles */}
       <div className="flex items-center gap-1.5 px-3 py-1.5" id="sel-highlighters">
-        {colors.map((c) => (
+        <span className="text-[9px] uppercase tracking-wider text-black/40 dark:text-white/40 font-bold mr-1">Highlight:</span>
+        {highlightStyles.map((style) => (
           <button
-            key={c.value}
+            key={style.class}
             onClick={() => {
-              onAction("highlight", c.class);
+              onAction("highlight", style.class);
               window.getSelection()?.removeAllRanges();
             }}
-            id={`btn-color-${c.label}`}
-            className="w-3.5 h-3.5 rounded-sm border border-black/5 dark:border-white/5 hover:scale-110 shadow-sm transition-transform cursor-pointer relative"
-            title={`Highlight ${c.label} [Key: H]`}
-            style={{ backgroundColor: c.colorHex }}
-          />
+            id={`btn-style-${style.label}`}
+            className="px-2 py-1 text-[9px] font-sans font-bold uppercase tracking-wider text-black/70 dark:text-white/70 border border-black/10 dark:border-white/10 hover:border-black dark:hover:border-white rounded-sm transition-all cursor-pointer"
+            title={`Highlight ${style.label}`}
+          >
+            {style.label}
+          </button>
         ))}
       </div>
     </div>
