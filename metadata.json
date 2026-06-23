@@ -1,0 +1,6 @@
+{
+  "name": "EPUB Reader",
+  "description": "A beautiful, distraction-free local-first EPUB reader with premium typography, invisible UI, saved highlights, and contextual AI assistants.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,127 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Literata:ital,opsz,wght@0,7..72,200..900;1,7..72,200..900&family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&family=Source+Serif+4:ital,opsz,wght@0,8..60,200..900;1,8..60,200..900&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Base resets & theme styles */
+body {
+  font-family: var(--font-sans);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Reader Typography Render Blocks */
+.epub-content {
+  /* Control specific paragraph layouts */
+}
+
+.epub-content p {
+  margin-top: 0;
+  margin-bottom: 1.25em;
+  text-indent: 0;
+  line-height: inherit;
+}
+
+/* Common epub paragraph indent first line pattern if desired, but we prefer clean spacing as requested: "clean paragraph spacing" */
+.epub-content p + p {
+  /* text-indent: 1.5em; if indents were used, but user said "clean paragraph spacing" from thesis, so margin-bottom suffices! */
+}
+
+.epub-content h1,
+.epub-content h2,
+.epub-content h3,
+.epub-content h4,
+.epub-content h5,
+.epub-content h6 {
+  font-family: var(--font-sans);
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  margin-top: 2em;
+  margin-bottom: 0.75em;
+}
+
+.epub-content h1 {
+  font-size: 2em;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  padding-bottom: 0.3em;
+}
+
+.epub-content h2 {
+  font-size: 1.6em;
+}
+
+.epub-content h3 {
+  font-size: 1.3em;
+}
+
+.epub-content blockquote {
+  border-left: 3px solid currentColor;
+  opacity: 0.85;
+  padding-left: 1.25em;
+  margin: 1.5em 0;
+  font-style: italic;
+}
+
+.epub-content ul,
+.epub-content ol {
+  margin: 1em 0;
+  padding-left: 1.75em;
+}
+
+.epub-content ul {
+  list-style-type: disc;
+}
+
+.epub-content ol {
+  list-style-type: decimal;
+}
+
+.epub-content li {
+  margin-bottom: 0.5em;
+}
+
+/* Custom Highlight colors to layer over dark or light themes smoothly */
+.custom-highlight-yellow {
+  background-color: rgba(253, 224, 71, 0.4); /* Tailwind yellow-300 with transparency */
+  border-radius: 2px;
+}
+
+.custom-highlight-green {
+  background-color: rgba(134, 239, 172, 0.4); /* Tailwind green-300 with transparency */
+  border-radius: 2px;
+}
+
+.custom-highlight-blue {
+  background-color: rgba(147, 197, 253, 0.4); /* Tailwind blue-300 with transparency */
+  border-radius: 2px;
+}
+
+.custom-highlight-purple {
+  background-color: rgba(216, 180, 254, 0.4); /* Tailwind purple-300 with transparency */
+  border-radius: 2px;
+}
+
+.custom-highlight-pink {
+  background-color: rgba(244, 180, 220, 0.4); /* Pink with transparency */
+  border-radius: 2px;
+}
+
+/* Invisible custom scrollbar for absolute immersion when reading, still scrollable */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+/* Animations and selection overlays */
+::selection {
+  background-color: rgba(147, 197, 253, 0.35); /* Elegant light blue highlight selection */
+}
