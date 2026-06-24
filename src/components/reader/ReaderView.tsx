@@ -200,7 +200,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         setChapters(parsed.chapters);
 
         // 3. Load Book Metadata (from IDB)
-        const allMetadata = await storage.getReaderSettings(); // fallback trigger
         const booksList = await storage.getAllBooks();
         const thisBook = booksList.find((b) => b.id === bookId);
 

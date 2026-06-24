@@ -206,11 +206,11 @@ const DEFAULT_SETTINGS: ReaderSettings = {
 
 export function getReaderSettings(): ReaderSettings {
   const data = localStorage.getItem(SETTINGS_KEY);
-  if (!data) return DEFAULT_SETTINGS;
+  if (!data) return { ...DEFAULT_SETTINGS };
   try {
-    return JSON.parse(data);
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(data) };
   } catch {
-    return DEFAULT_SETTINGS;
+    return { ...DEFAULT_SETTINGS };
   }
 }
 
