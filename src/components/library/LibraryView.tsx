@@ -5,7 +5,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { Book } from "../../types";
-import { getAllBooks, saveBookMetadata, saveBookFile, deleteBookMetadata, deleteBookFile } from "../../utils/db";
+import { storage } from "@/features/storage";
 import { parseEpub } from "../../utils/epubParser";
 
 interface LibraryViewProps {
@@ -30,7 +30,7 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
   const loadBooks = async () => {
     try {
       setLoading(true);
-      const all = await getAllBooks();
+      const all = await storage.getAllBooks();
       setBooks(all);
     } catch (e) {
       console.error("Failed to load local books:", e);
@@ -84,8 +84,8 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
       };
 
       // 4. Save file & metadata to IndexedDB
-      await saveBookFile(bookId, arrayBuffer);
-      await saveBookMetadata(newBook);
+      await storage.saveBookFile(bookId, arrayBuffer);
+      await storage.saveBookMetadata(newBook);
 
       // 5. Reload book list
       await loadBooks();
@@ -293,8 +293,8 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
                   const targetId = bookToDelete.id;
                   setBookToDelete(null);
                   try {
-                    await deleteBookMetadata(targetId);
-                    await deleteBookFile(targetId);
+                    await storage.deleteBookMetadata(targetId);
+                    await storage.deleteBookFile(targetId);
                     setBooks((prev) => prev.filter((b) => b.id !== targetId));
                   } catch (err) {
                     console.error("Delete book failed:", err);
