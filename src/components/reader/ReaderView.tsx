@@ -5,18 +5,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Book, Highlight, SavedWord, ReaderSettings, ReaderTheme, ReaderFont } from "../../types";
-import {
-  getBookFile,
-  saveBookMetadata,
-  getBookHighlights,
-  saveHighlight,
-  getBookSavedWords,
-  saveSavedWord,
-  getReaderSettings,
-  saveReaderSettings,
-  getAllBooks,
-  deleteHighlight,
-} from "../../utils/db";
+import { storage } from "@/features/storage";
 import { parseEpub, loadChapterContent, ParsedBook, ParsedChapter } from "../../utils/epubParser";
 // No icons needed for text-only interface
 import SelectionMenu from "./SelectionMenu";
@@ -59,7 +48,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const [savedWords, setSavedWords] = useState<SavedWord[]>([]);
 
   // Reader Settings
-  const [settings, setSettings] = useState<ReaderSettings>(getReaderSettings());
+  const [settings, setSettings] = useState<ReaderSettings>(storage.getReaderSettings());
 
   // Sync document root dark class list with theme setting
   useEffect(() => {
@@ -200,7 +189,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         setError(null);
 
         // 1. Fetch raw binary file from IDB
-        const fileBytes = await getBookFile(bookId);
+        const fileBytes = await storage.getBookFile(bookId);
         if (!fileBytes) {
           throw new Error("Local book binary data file not found in database.");
         }
@@ -211,8 +200,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         setChapters(parsed.chapters);
 
         // 3. Load Book Metadata (from IDB)
-        const allMetadata = await getReaderSettings(); // fallback trigger
-        const booksList = await getAllBooks();
+        const allMetadata = await storage.getReaderSettings(); // fallback trigger
+        const booksList = await storage.getAllBooks();
         const thisBook = booksList.find((b) => b.id === bookId);
 
         if (thisBook) {
@@ -228,16 +217,16 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
         // Update last opened timeline
         if (thisBook) {
-          await saveBookMetadata({
+          await storage.saveBookMetadata({
             ...thisBook,
             lastOpenedAt: new Date().toISOString(),
           });
         }
 
         // 4. Load initial collections
-        const dbHighlights = await getBookHighlights(bookId);
+        const dbHighlights = await storage.getBookHighlights(bookId);
         setHighlights(dbHighlights);
-        const dbWords = await getBookSavedWords(bookId);
+        const dbWords = await storage.getBookSavedWords(bookId);
         setSavedWords(dbWords);
 
       } catch (err: any) {
@@ -253,12 +242,12 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   // Read raw highlights for the current book
   const loadHighlights = async () => {
-    const dbHighlights = await getBookHighlights(bookId);
+    const dbHighlights = await storage.getBookHighlights(bookId);
     setHighlights(dbHighlights);
   };
 
   const loadSavedWords = async () => {
-    const dbWords = await getBookSavedWords(bookId);
+    const dbWords = await storage.getBookSavedWords(bookId);
     setSavedWords(dbWords);
   };
 
@@ -309,7 +298,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     const timeoutId = (window as any)._dbSaveTimeout;
     if (timeoutId) clearTimeout(timeoutId);
     (window as any)._dbSaveTimeout = setTimeout(() => {
-      saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
+      storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
     }, 800);
   };
 
@@ -425,7 +414,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           },
         };
         setCurrentBookMeta(updatedMeta);
-        saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
+        storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
       }
 
       setLayoutSettled(true);
@@ -532,10 +521,10 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     if (highlightId) {
       const existingHl = highlights.find((h) => h.id === highlightId);
       if (existingHl) {
-        await deleteHighlight(highlightId);
+        await storage.deleteHighlight(highlightId);
         await loadHighlights();
         showToast("Highlight removed.", async () => {
-          await saveHighlight(existingHl);
+          await storage.saveHighlight(existingHl);
           await loadHighlights();
           showToast("Highlight restored.");
         });
@@ -566,7 +555,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         createdAt: new Date().toISOString(),
       };
 
-      await saveHighlight(newHl);
+      await storage.saveHighlight(newHl);
       await loadHighlights();
       showToast("Highlight added.");
       selection.removeAllRanges();
@@ -583,7 +572,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         createdAt: new Date().toISOString(),
       };
 
-      await saveSavedWord(newSaved);
+      await storage.saveSavedWord(newSaved);
       await loadSavedWords();
       showToast(`Saved "${text}" to vocabulary.`);
 
@@ -597,7 +586,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         });
 
         if (enriched) {
-          await saveSavedWord({
+          await storage.saveSavedWord({
             ...newSaved,
             definition: enriched.definition,
             contextualMeaning: enriched.contextualMeaning,
@@ -745,7 +734,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const handleSettingsChange = (newSettings: ReaderSettings) => {
     setSuppressAnimation(true);
     setSettings(newSettings);
-    saveReaderSettings(newSettings);
+    storage.saveReaderSettings(newSettings);
   };
 
   // Theme map helper definitions
