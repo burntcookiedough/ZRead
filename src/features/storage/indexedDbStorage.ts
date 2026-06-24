@@ -119,6 +119,40 @@ export async function deleteBookMetadata(bookId: string): Promise<void> {
   });
 }
 
+export async function deleteBook(bookId: string): Promise<void> {
+  const db = await openDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(["books", "book_files", "highlights", "saved_words"], "readwrite");
+    const booksStore = tx.objectStore("books");
+    const filesStore = tx.objectStore("book_files");
+    const highlightsStore = tx.objectStore("highlights");
+    const savedWordsStore = tx.objectStore("saved_words");
+
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+
+    booksStore.delete(bookId);
+    filesStore.delete(bookId);
+
+    const highlightsReq = highlightsStore.getAll();
+    highlightsReq.onsuccess = () => {
+      const highlights = highlightsReq.result as Highlight[];
+      highlights
+        .filter((highlight) => highlight.bookId === bookId)
+        .forEach((highlight) => highlightsStore.delete(highlight.id));
+    };
+
+    const savedWordsReq = savedWordsStore.getAll();
+    savedWordsReq.onsuccess = () => {
+      const savedWords = savedWordsReq.result as SavedWord[];
+      savedWords
+        .filter((word) => word.bookId === bookId)
+        .forEach((word) => savedWordsStore.delete(word.id));
+    };
+  });
+}
+
 // Highlights
 export async function getBookHighlights(bookId: string): Promise<Highlight[]> {
   const db = await openDB();
@@ -222,6 +256,7 @@ export const indexedDbStorage: BookStorage = {
   saveBookFile,
   getBookFile,
   deleteBookFile,
+  deleteBook,
   getAllBooks,
   saveBookMetadata,
   deleteBookMetadata,

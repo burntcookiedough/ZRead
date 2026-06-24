@@ -4,6 +4,7 @@ export interface BookStorage {
   saveBookFile(bookId: string, fileData: ArrayBuffer): Promise<void>;
   getBookFile(bookId: string): Promise<ArrayBuffer | null>;
   deleteBookFile(bookId: string): Promise<void>;
+  deleteBook(bookId: string): Promise<void>;
 
   getAllBooks(): Promise<Book[]>;
   saveBookMetadata(book: Book): Promise<void>;
