@@ -3,8 +3,11 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 import {defineConfig} from 'vite';
 
+const host = process.env.TAURI_DEV_HOST;
+
 export default defineConfig(() => {
   return {
+    clearScreen: false,
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {
@@ -12,11 +15,30 @@ export default defineConfig(() => {
       },
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
-      hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      port: 5173,
+      strictPort: true,
+      host: host || false,
+      hmr: host
+        ? {
+            protocol: "ws",
+            host,
+            port: 1421,
+          }
+        : (process.env.DISABLE_HMR === 'true' ? false : undefined),
+      watch: process.env.DISABLE_HMR === 'true'
+        ? null
+        : {
+            ignored: ["**/src-tauri/**"],
+          },
+    },
+    envPrefix: ["VITE_", "TAURI_ENV_*"],
+    build: {
+      target:
+        process.env.TAURI_ENV_PLATFORM === "windows"
+          ? "chrome105"
+          : "safari13",
+      minify: !process.env.TAURI_ENV_DEBUG ? ("esbuild" as const) : false,
+      sourcemap: !!process.env.TAURI_ENV_DEBUG,
     },
   };
 });
