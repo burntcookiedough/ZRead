@@ -11,7 +11,7 @@ Target PR branch: dev
 
 This document maps the current merged repo state against the frozen V1 scope.
 
-Phase 4A must not start until this progress map is merged.
+Phase 4A is complete in `dev`; this progress map now tracks what remains before V1 readiness.
 
 ---
 
@@ -26,10 +26,10 @@ all work starts from dev
 PR target = dev
 ```
 
-Current progress mapping branch:
+Current integration branch:
 
 ```text
-docs/v1-progress-map
+dev
 ```
 
 ### CI Status
@@ -51,7 +51,7 @@ pull_request -> main, dev
 push -> main, dev
 ```
 
-CI currently covers the web TypeScript/build path. It does not yet cover full desktop packaging.
+CI currently covers the React/Vite development browser runtime TypeScript/build path. It does not yet cover full desktop packaging.
 
 ### Desktop Runtime Status
 
@@ -76,7 +76,7 @@ devUrl: http://localhost:5173
 bundle targets: all
 ```
 
-The app has a native Tauri shell, but desktop-native storage and desktop-native import are not complete.
+The app has a native Tauri shell, desktop-native EPUB import, and app-owned EPUB file copies. Full desktop-native metadata storage is not complete.
 
 ### Windows Build Status
 
@@ -143,7 +143,7 @@ frontend wired into Tauri
 app identity configured as ZRead
 ```
 
-### Storage Abstraction
+### Storage Abstraction And Phase 4A Desktop File Storage
 
 The current IndexedDB implementation has been moved behind a storage interface.
 
@@ -152,7 +152,7 @@ Completed:
 ```text
 BookStorage interface
 indexedDbStorage implementation
-desktopStorage placeholder
+desktopStorage implementation for app-owned EPUB files
 runtime storage selector
 LibraryView uses storage abstraction
 ReaderView uses storage abstraction
@@ -161,7 +161,7 @@ ReaderView uses storage abstraction
 Important current limitation:
 
 ```text
-desktopStorage currently delegates to IndexedDB
+desktopStorage stores EPUB files in app data and delegates metadata, progress, highlights, saved words, and settings to IndexedDB/localStorage
 ```
 
 SQLite and filesystem storage have not been added.
@@ -255,7 +255,7 @@ Completed:
 generated AI Studio metadata removed
 basic repo cleanup merged into dev
 package identity renamed to zread
-browser/app title renamed to ZRead
+development browser runtime/app title renamed to ZRead
 ```
 
 ---
@@ -286,7 +286,7 @@ Compatibility:
 
 ```text
 desktop reads prefer the app-owned EPUB copy and fall back to the legacy IndexedDB book_files blob when the app-owned file is missing
-browser/web storage remains IndexedDB-backed
+browser fallback storage remains IndexedDB-backed
 ```
 
 ### SQLite / Filesystem Desktop Storage

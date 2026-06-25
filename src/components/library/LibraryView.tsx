@@ -176,6 +176,9 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
       year: "numeric",
     });
   };
+  const localStorageDescription = isTauriRuntime
+    ? "Documents are copied into the desktop app data directory and kept local to this device."
+    : "Documents are processed locally in the development browser runtime's IndexedDB sandbox database.";
 
   return (
     <div className="w-full max-w-5xl mx-auto px-6 py-12 md:py-16 text-black dark:text-white min-h-screen flex flex-col justify-start" id="lib-root">
@@ -245,7 +248,7 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
           >
             <h3 className="font-serif italic text-2xl text-black dark:text-white mb-2 font-medium">Drop an EPUB to start reading</h3>
             <p className="font-sans text-[11px] tracking-wider text-black/60 dark:text-white/60 max-w-sm leading-relaxed mb-6">
-              Documents are processed locally in your browser's IndexedDB sandbox database.
+              {localStorageDescription}
             </p>
             <span className="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-sm text-[9px] uppercase tracking-[0.2em] font-bold hover:bg-white hover:text-black dark:hover:bg-black dark:hover:text-white border border-black dark:border-white transition-all">
               Select Book File
