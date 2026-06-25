@@ -67,7 +67,12 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
     };
 
     await storage.saveBookFile(bookId, arrayBuffer);
-    await storage.saveBookMetadata(newBook);
+    try {
+      await storage.saveBookMetadata(newBook);
+    } catch (err) {
+      await storage.deleteBookFile(bookId);
+      throw err;
+    }
     await loadBooks();
     onBookSelect(bookId);
   };
