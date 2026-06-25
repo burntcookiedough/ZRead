@@ -293,8 +293,7 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
                   const targetId = bookToDelete.id;
                   setBookToDelete(null);
                   try {
-                    await storage.deleteBookMetadata(targetId);
-                    await storage.deleteBookFile(targetId);
+                    await storage.deleteBook(targetId);
                     setBooks((prev) => prev.filter((b) => b.id !== targetId));
                   } catch (err) {
                     console.error("Delete book failed:", err);

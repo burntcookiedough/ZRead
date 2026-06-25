@@ -7,10 +7,13 @@ import { useEffect, useState, useRef } from "react";
 // No icons needed for text-only menu
 
 interface SelectionMenuProps {
-  onAction: (action: "define" | "explain" | "save" | "highlight", extra?: string) => void;
+  onAction: (action: "copy" | "define" | "explain" | "save" | "highlight", extra?: string, selectedText?: string) => void;
   onClose: () => void;
 }
 
+/**
+ * Shows contextual actions for selected reader text and forwards the captured selection to callers.
+ */
 export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps) {
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const [selectedText, setSelectedText] = useState("");
@@ -23,6 +26,9 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
   ];
 
   useEffect(() => {
+    /**
+     * Tracks the active text selection and positions the floating menu above reader content.
+     */
     const handleSelectionChange = () => {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) {
@@ -78,6 +84,9 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
   useEffect(() => {
     if (!coords || !selectedText) return;
 
+    /**
+     * Handles keyboard shortcuts for the currently visible selection menu.
+     */
     const handleKeyDown = (e: KeyboardEvent) => {
       // Escape closes current floating state
       if (e.key === "Escape") {
@@ -88,19 +97,25 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
 
       // Case-insensitive matching
       const key = e.key.toLowerCase();
-      if (key === "d") {
+      if ((e.ctrlKey || e.metaKey) && key === "c") {
+        // Let the browser's native copy run; avoid a duplicate clipboard write and false failure toast.
+        return;
+      } else if (key === "c") {
         e.preventDefault();
-        onAction("define");
+        onAction("copy", undefined, selectedText);
+      } else if (key === "d") {
+        e.preventDefault();
+        onAction("define", undefined, selectedText);
       } else if (key === "e") {
         e.preventDefault();
-        onAction("explain");
+        onAction("explain", undefined, selectedText);
       } else if (key === "s") {
         e.preventDefault();
-        onAction("save");
+        onAction("save", undefined, selectedText);
       } else if (key === "h") {
         e.preventDefault();
         // Default highlight to underline
-        onAction("highlight", "custom-highlight-underline");
+        onAction("highlight", "custom-highlight-underline", selectedText);
       }
     };
 
@@ -128,7 +143,21 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
       {/* Short quick action labels */}
       <button
         onClick={() => {
-          onAction("define");
+          onAction("copy", undefined, selectedText);
+          window.getSelection()?.removeAllRanges();
+        }}
+        id="btn-sel-copy"
+        title="Copy text [Key: C]"
+        className="flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-sans font-bold uppercase tracking-wider text-black/75 dark:text-white/75 hover:bg-black/5 dark:hover:bg-white/5 transition-colors cursor-pointer"
+      >
+        <span>Copy</span>
+      </button>
+
+      <div className="w-px h-3 bg-black/10 dark:bg-white/10" />
+
+      <button
+        onClick={() => {
+          onAction("define", undefined, selectedText);
           window.getSelection()?.removeAllRanges();
         }}
         id="btn-sel-define"
@@ -142,7 +171,7 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
 
       <button
         onClick={() => {
-          onAction("explain");
+          onAction("explain", undefined, selectedText);
           window.getSelection()?.removeAllRanges();
         }}
         id="btn-sel-explain"
@@ -156,7 +185,7 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
 
       <button
         onClick={() => {
-          onAction("save");
+          onAction("save", undefined, selectedText);
           window.getSelection()?.removeAllRanges();
         }}
         id="btn-sel-save"
@@ -175,7 +204,7 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
           <button
             key={style.class}
             onClick={() => {
-              onAction("highlight", style.class);
+              onAction("highlight", style.class, selectedText);
               window.getSelection()?.removeAllRanges();
             }}
             id={`btn-style-${style.label}`}
