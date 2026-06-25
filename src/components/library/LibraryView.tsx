@@ -5,6 +5,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { Book } from "../../types";
+import { isTauriRuntime } from "@/app/runtime";
 import { storage } from "@/features/storage";
 import { parseEpub } from "../../utils/epubParser";
 
@@ -49,11 +50,37 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
     }
   };
 
+  const importEpubFromBuffer = async (arrayBuffer: ArrayBuffer, fileName: string) => {
+    const parsed = await parseEpub(arrayBuffer);
+    const bookId = `book_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+    const newBook: Book = {
+      id: bookId,
+      title: parsed.title,
+      author: parsed.author,
+      fileName,
+      createdAt: new Date().toISOString(),
+      lastOpenedAt: new Date().toISOString(),
+      progress: {
+        chapterIndex: 0,
+        scrollPercent: 0,
+      },
+    };
+
+    await storage.saveBookFile(bookId, arrayBuffer);
+    try {
+      await storage.saveBookMetadata(newBook);
+    } catch (err) {
+      await storage.deleteBookFile(bookId);
+      throw err;
+    }
+    await loadBooks();
+    onBookSelect(bookId);
+  };
+
   const validateAndProcessFile = async (file: File) => {
     if (!file) return;
-    
-    // Check if epub file format
-    if (!file.name.endsWith(".epub") && file.type !== "application/epub+zip") {
+
+    if (!isEpubFileName(file.name) && file.type !== "application/epub+zip") {
       setUploadError("This reader currently only supports standard EPUB files. Please select a valid document.");
       return;
     }
@@ -62,40 +89,51 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
     setIsUploading(true);
 
     try {
-      // 1. Read file as ArrayBuffer
       const arrayBuffer = await file.arrayBuffer();
-
-      // 2. Parse EPUB metadata to ensure it's valid
-      const parsed = await parseEpub(arrayBuffer);
-
-      // 3. Create Book metadata item
-      const bookId = `book_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      const newBook: Book = {
-        id: bookId,
-        title: parsed.title,
-        author: parsed.author,
-        fileName: file.name,
-        createdAt: new Date().toISOString(),
-        lastOpenedAt: new Date().toISOString(),
-        progress: {
-          chapterIndex: 0,
-          scrollPercent: 0,
-        },
-      };
-
-      // 4. Save file & metadata to IndexedDB
-      await storage.saveBookFile(bookId, arrayBuffer);
-      await storage.saveBookMetadata(newBook);
-
-      // 5. Reload book list
-      await loadBooks();
-      
-      // Auto-open newly loaded book instantly
-      onBookSelect(bookId);
-
+      await importEpubFromBuffer(arrayBuffer, file.name);
     } catch (err: any) {
       console.error("EPUB upload parsing error:", err);
       setUploadError(err.message || "Could not successfully parse or save this book. The EPUB container might be corrupted.");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const isEpubFileName = (fileName: string) => fileName.toLowerCase().endsWith(".epub");
+
+  const getFileNameFromPath = (path: string) => {
+    return path.split(/[\\/]/).pop() || "Imported EPUB";
+  };
+
+  const importFromNativePicker = async () => {
+    setUploadError(null);
+
+    try {
+      const [{ open }, { readFile }] = await Promise.all([
+        import("@tauri-apps/plugin-dialog"),
+        import("@tauri-apps/plugin-fs"),
+      ]);
+      const selectedPath = await open({
+        multiple: false,
+        directory: false,
+        title: "Import EPUB",
+        filters: [{ name: "EPUB", extensions: ["epub"] }],
+      });
+
+      if (!selectedPath) return;
+
+      const fileName = getFileNameFromPath(selectedPath);
+      if (!isEpubFileName(fileName)) {
+        setUploadError("This reader currently only supports standard EPUB files. Please select a .epub document.");
+        return;
+      }
+
+      setIsUploading(true);
+      const fileBytes = await readFile(selectedPath);
+      await importEpubFromBuffer(fileBytes.buffer.slice(fileBytes.byteOffset, fileBytes.byteOffset + fileBytes.byteLength), fileName);
+    } catch (err: any) {
+      console.error("Native EPUB import failed:", err);
+      setUploadError(err.message || "Could not successfully import this EPUB from the desktop file picker.");
     } finally {
       setIsUploading(false);
     }
@@ -118,6 +156,10 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
   };
 
   const triggerFileBrowser = () => {
+    if (isTauriRuntime) {
+      void importFromNativePicker();
+      return;
+    }
     fileInputRef.current?.click();
   };
 
@@ -134,6 +176,9 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
       year: "numeric",
     });
   };
+  const localStorageDescription = isTauriRuntime
+    ? "Documents are copied into the desktop app data directory and kept local to this device."
+    : "Documents are processed locally in the development browser runtime's IndexedDB sandbox database.";
 
   return (
     <div className="w-full max-w-5xl mx-auto px-6 py-12 md:py-16 text-black dark:text-white min-h-screen flex flex-col justify-start" id="lib-root">
@@ -203,7 +248,7 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
           >
             <h3 className="font-serif italic text-2xl text-black dark:text-white mb-2 font-medium">Drop an EPUB to start reading</h3>
             <p className="font-sans text-[11px] tracking-wider text-black/60 dark:text-white/60 max-w-sm leading-relaxed mb-6">
-              Documents are processed locally in your browser's IndexedDB sandbox database.
+              {localStorageDescription}
             </p>
             <span className="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-sm text-[9px] uppercase tracking-[0.2em] font-bold hover:bg-white hover:text-black dark:hover:bg-black dark:hover:text-white border border-black dark:border-white transition-all">
               Select Book File
