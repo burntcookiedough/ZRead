@@ -119,6 +119,7 @@ Phase 5.1: desktop SQLite adapter skeleton.
 - Add the desktop SQLite command/adapter shape.
 - Keep behavior migration out of this phase.
 - Keep browser fallback unchanged.
+- Status: implemented as SQL plugin wiring plus a minimal desktop SQLite health-check helper; no app metadata is routed to SQLite in this phase.
 
 Phase 5.2: books/progress metadata moved to desktop storage.
 

@@ -303,7 +303,8 @@ Current status:
 ```text
 storage abstraction exists
 desktopStorage stores EPUB files in app data and delegates metadata/progress/highlights/saved words/settings to IndexedDB/localStorage
-SQLite not added
+Phase 5.1 adds SQL plugin wiring and a desktop SQLite health-check adapter skeleton
+SQLite is not used for app metadata yet
 filesystem metadata storage not added
 ```
 
