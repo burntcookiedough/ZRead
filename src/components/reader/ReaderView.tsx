@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Book, Highlight, SavedWord, ReaderSettings, ReaderTheme, ReaderFont } from "../../types";
+import { Book, Highlight, SavedWord, ReaderSettings, ReaderTheme } from "../../types";
 import { storage } from "@/features/storage";
 import { parseEpub, loadChapterContent, ParsedBook, ParsedChapter } from "../../utils/epubParser";
 // No icons needed for text-only interface
@@ -17,6 +17,8 @@ interface ReaderViewProps {
   bookId: string;
   onBackToLibrary: () => void;
 }
+
+const COLUMN_GAP = 48;
 
 export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps) {
   // EPUB Parser States
@@ -41,7 +43,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   // Reader HUD Control States
   const [hudVisible, setHudVisible] = useState(true);
   const [showTypography, setShowTypography] = useState(false);
-  const [showChapterIndex, setShowChapterIndex] = useState(false);
 
   // Active highlights & Vocab
   const [highlights, setHighlights] = useState<Highlight[]>([]);
@@ -82,16 +83,17 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     };
   }, []);
 
+  const isInteractiveTarget = (target: HTMLElement) => {
+    return !!target.closest(
+      "button, input, textarea, select, a, " +
+        "#reader-hud-header, #reader-footer, #typo-panel-sec, " +
+        "#selection-floating-menu, #ai-response-popover, #chapter-edge-nav, #toast-notification"
+    );
+  };
+
   const handleGlobalClick = (e: React.MouseEvent) => {
-    // Avoid entering fullscreen when clicking controls or back button
     const target = e.target as HTMLElement;
-    if (
-      target.closest("#btn-reader-back") || 
-      target.closest("#btn-close-typo") || 
-      target.closest("#btn-close-chapters") ||
-      target.closest("#typo-panel-sec") ||
-      target.closest("#chapters-drawer")
-    ) {
+    if (isInteractiveTarget(target)) {
       return;
     }
 
@@ -104,9 +106,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   // HUD disappear timers
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // Selection Menu states
-  const [selectionActive, setSelectionActive] = useState(false);
 
   // AI Popover state
   const [aiState, setAiState] = useState<{
@@ -135,6 +134,26 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     currentBookMetaRef.current = currentBookMeta;
   }, [currentBookMeta]);
 
+  const getPaginationMetrics = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return null;
+
+    const viewport = container.clientWidth;
+    if (viewport <= 0) return null;
+
+    const content = container.querySelector<HTMLElement>("#reader-chapter-body");
+    const scrollWidth = content?.scrollWidth || container.scrollWidth;
+    const stride = viewport + COLUMN_GAP;
+    const total = Math.max(1, Math.ceil((scrollWidth + COLUMN_GAP) / stride));
+
+    return { viewport, total };
+  }, []);
+
+  const pageForSavedPercent = useCallback((total: number) => {
+    const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
+    return Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
+  }, []);
+
   const activeChapterRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (showChapterBarPanel && activeChapterRef.current) {
@@ -150,12 +169,12 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     if (timerRef.current) clearTimeout(timerRef.current);
     
     timerRef.current = setTimeout(() => {
-      // Don't auto-hide HUD if configuration dialog or chapter list index is open
-      if (!showTypography && !showChapterIndex && !aiState.visible) {
+      // Don't auto-hide HUD if configuration dialog or AI result is open
+      if (!showTypography && !aiState.visible) {
         setHudVisible(false);
       }
     }, 2500);
-  }, [showTypography, showChapterIndex, aiState.visible]);
+  }, [showTypography, aiState.visible]);
 
   useEffect(() => {
     refreshHudTimeout();
@@ -338,27 +357,19 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   // Recalculates horizontal scroll offset on window resize
   const recalculatePages = useCallback(() => {
-    if (!containerRef.current) return;
     setSuppressAnimation(true);
-    const container = containerRef.current;
-    const w = container.clientWidth;
-    const gap = 48;
-    if (w <= 0) return;
-
-    setViewportWidth(w);
-
-    const scrollWidth = container.scrollWidth;
-    const total = Math.max(1, Math.round((scrollWidth + gap) / (w + gap)));
+    const metrics = getPaginationMetrics();
+    if (!metrics) return;
+    const { viewport, total } = metrics;
+    setViewportWidth(viewport);
     setTotalChapterPages(total);
-
-    const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
-    const targetPage = Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
+    const targetPage = Math.min(total - 1, chapterPageIndex);
     setChapterPageIndex(targetPage);
 
     setTimeout(() => {
       setSuppressAnimation(false);
     }, 50);
-  }, []);
+  }, [chapterPageIndex, getPaginationMetrics]);
 
   // Window resize handler
   useEffect(() => {
@@ -375,16 +386,11 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     if (loading || !chapterContent || !containerRef.current) return;
 
     const timer = setTimeout(() => {
-      if (!containerRef.current) return;
-      const container = containerRef.current;
-      const w = container.clientWidth;
-      const gap = 48;
-      if (w <= 0) return;
+      const metrics = getPaginationMetrics();
+      if (!metrics) return;
+      const { viewport, total } = metrics;
 
-      setViewportWidth(w);
-
-      const scrollWidth = container.scrollWidth;
-      const total = Math.max(1, Math.round((scrollWidth + gap) / (w + gap)));
+      setViewportWidth(viewport);
       setTotalChapterPages(total);
 
       let targetPage = chapterPageIndex;
@@ -392,9 +398,10 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         targetPage = total - 1;
       } else if (pendingPageAction === "first") {
         targetPage = 0;
+      } else if (pendingPageAction === "restore") {
+        targetPage = pageForSavedPercent(total);
       } else {
-        const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
-        targetPage = Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
+        targetPage = Math.min(total - 1, Math.max(0, chapterPageIndex));
       }
 
       setChapterPageIndex(targetPage);
@@ -423,7 +430,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }, 150);
 
     return () => clearTimeout(timer);
-  }, [loading, chapterContent, pendingPageAction, settings, currentChapterIdx]);
+  }, [loading, chapterContent, pendingPageAction, settings, currentChapterIdx, chapterPageIndex, getPaginationMetrics, pageForSavedPercent]);
 
   // Highlights injector implementation
   const getRenderHtml = () => {
@@ -532,18 +539,37 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   };
 
   // Text selection handler callbacks from floating SelectionMenu
-  const handleSelectionAction = async (action: "define" | "explain" | "save" | "highlight", extra?: string) => {
-    const selection = window.getSelection();
-    if (!selection) return;
+  const getAIErrorMessage = (err: any, actionLabel: string) => {
+    const detail = err?.message ? `${err.message} ` : "";
+    return `${detail}${actionLabel} is unavailable. Reading, copy, save, and highlight still work offline.`;
+  };
 
-    const text = selection.toString().trim();
+  const handleSelectionAction = async (
+    action: "copy" | "define" | "explain" | "save" | "highlight",
+    extra?: string,
+    selectedTextOverride?: string
+  ) => {
+    const selection = window.getSelection();
+
+    const text = (selection?.toString() || selectedTextOverride || "").trim();
     if (!text) return;
 
     // Retrieve context node sentence
-    const contextNode = selection.anchorNode?.parentNode;
+    const contextNode = selection?.anchorNode?.parentNode;
     const sentenceContext = contextNode?.textContent || text;
 
-    if (action === "highlight") {
+    if (action === "copy") {
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast("Copied selected text.");
+      } catch (err) {
+        console.error("Copy selected text failed:", err);
+        showToast("Copy failed. Use Ctrl+C while the text is selected.");
+      } finally {
+        selection?.removeAllRanges();
+      }
+
+    } else if (action === "highlight") {
       const colorClass = extra || "custom-highlight-yellow";
       const newHl: Highlight = {
         id: `hl_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
@@ -557,7 +583,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       await storage.saveHighlight(newHl);
       await loadHighlights();
       showToast("Highlight added.");
-      selection.removeAllRanges();
+      selection?.removeAllRanges();
 
     } else if (action === "save") {
       // Save word callback (defines dynamically with AI behind the scenes!)
@@ -618,7 +644,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
         setAiState((prev) => ({ ...prev, loading: false, result: res }));
       } catch (err: any) {
-        setAiState((prev) => ({ ...prev, loading: false, error: err.message || "An error occurred with Gemini." }));
+        setAiState((prev) => ({ ...prev, loading: false, error: getAIErrorMessage(err, "AI definition") }));
       }
 
     } else if (action === "explain") {
@@ -640,7 +666,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
         setAiState((prev) => ({ ...prev, loading: false, result: res }));
       } catch (err: any) {
-        setAiState((prev) => ({ ...prev, loading: false, error: err.message || "An error occurred with Gemini." }));
+        setAiState((prev) => ({ ...prev, loading: false, error: getAIErrorMessage(err, "AI explanation") }));
       }
     }
   };
@@ -651,7 +677,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       // Escape closes current overlays
       if (e.key === "Escape") {
         if (showTypography) setShowTypography(false);
-        else if (showChapterIndex) setShowChapterIndex(false);
         else if (aiState.visible) setAiState((prev) => ({ ...prev, visible: false }));
         return;
       }
@@ -676,29 +701,12 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         // Toggle settings
         e.preventDefault();
         setShowTypography((prev) => !prev);
-      } else if (e.key === "i" || e.key === "I") {
-        // Toggle index list
-        e.preventDefault();
-        setShowChapterIndex((prev) => !prev);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showTypography, showChapterIndex, aiState.visible, currentChapterIdx, chapters, chapterPageIndex, totalChapterPages]);
-
-  // Navigate chapters helpers
-  const navigateChapter = (dir: number) => {
-    const target = currentChapterIdx + dir;
-    if (target >= 0 && target < chapters.length) {
-      setSuppressAnimation(true);
-      setCurrentChapterIdx(target);
-    } else if (target < 0) {
-      showToast("You are at the very beginning of the book.");
-    } else {
-      showToast("You have reached the end of the book.");
-    }
-  };
+  }, [showTypography, aiState.visible, currentChapterIdx, chapters, chapterPageIndex, totalChapterPages]);
 
   // Chapter Summarization callback (from HUD sparking action)
   const handleSummarizeChapter = async () => {
@@ -759,19 +767,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }
   };
 
-  const getFontClass = (f: ReaderFont) => {
-    switch (f) {
-      case "Literata":
-        return "font-['Literata']";
-      case "Newsreader":
-        return "font-['Newsreader']";
-      case "Source Serif":
-        return "font-['Source_Serif_4']";
-      case "Georgia":
-        return "font-serif";
-    }
-  };
-
   if (loading && !chapterContent) {
     return (
       <div className="w-full h-screen flex flex-col items-center justify-center bg-white dark:bg-black text-black dark:text-white" id="read-loader">
@@ -799,8 +794,11 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const themeStyle = getThemeClass(settings.theme);
   const activeChapter = chapters[currentChapterIdx];
   const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
-  const columnCount = settings.viewMode === "split" && !isMobile ? 2 : 1;
-  const viewportMaxWidthStr = isMobile ? "calc(100vw - 32px)" : "calc(100vw - 96px)";
+  const visiblePageCount = settings.viewMode === "split" && !isMobile ? 2 : 1;
+  const viewportMaxWidth = settings.contentWidth * visiblePageCount + (visiblePageCount - 1) * COLUMN_GAP;
+  const viewportWidthStr = isMobile
+    ? `min(calc(100vw - 32px), ${settings.contentWidth}px)`
+    : `min(calc(100vw - 96px), ${viewportMaxWidth}px)`;
   const viewportTopClass = isFullscreen ? "top-6" : "top-16";
   const viewportBottomClass = isFullscreen ? "bottom-6" : "bottom-12";
 
@@ -854,24 +852,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
           <button
             onClick={() => {
-              setShowChapterIndex(!showChapterIndex);
-              setShowTypography(false);
-            }}
-            id="btn-reader-toc"
-            title="Chapters list [Key: I]"
-            className={`px-2.5 py-1.5 rounded-sm border text-[9px] uppercase tracking-[0.15em] font-sans font-bold transition-all cursor-pointer ${
-              showChapterIndex
-                ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black"
-                : "border-black/10 dark:border-white/10 text-black/60 dark:text-white/60 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white"
-            }`}
-          >
-            Index
-          </button>
-
-          <button
-            onClick={() => {
               setShowTypography(!showTypography);
-              setShowChapterIndex(false);
             }}
             id="btn-reader-typo"
             title="Typography settings [Key: T]"
@@ -888,50 +869,12 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
       {/* 2. Side Panel drawers for Typography and Chapter indexes */}
       {showTypography && (
-        <div className="absolute top-18 right-6 z-50 animate-in fade-in zoom-in-95 duration-150" id="typo-panel-sec">
+        <div className="absolute top-[4.5rem] right-6 z-50 w-[min(24rem,calc(100vw-3rem))] animate-in fade-in zoom-in-95 duration-150" id="typo-panel-sec">
           <TypographyPanel
             settings={settings}
             onChange={handleSettingsChange}
             onClose={() => setShowTypography(false)}
           />
-        </div>
-      )}
-
-      {showChapterIndex && (
-        <div className="absolute top-18 right-6 z-50 w-full max-w-sm rounded-sm shadow-2xl border border-black/10 dark:border-white/10 backdrop-blur-md bg-white/95 dark:bg-neutral-900/95 max-h-[75vh] flex flex-col p-6 animate-in fade-in zoom-in-95 duration-150" id="chapters-drawer">
-          <div className="flex items-center justify-between mb-4 border-b pb-2 border-black/5 dark:border-white/5">
-            <span className="font-sans font-bold text-[10px] uppercase tracking-[0.2em] text-black/60 dark:text-white/60">
-              <span>Chapters Index</span>
-            </span>
-            <button
-              onClick={() => setShowChapterIndex(false)}
-              id="btn-close-chapters"
-              className="text-[9px] uppercase tracking-[0.15em] font-sans font-bold text-black/40 hover:text-black dark:text-white/45 dark:hover:text-white transition-colors"
-            >
-              Close
-            </button>
-          </div>
-          <div className="overflow-y-auto flex-1 pr-1 space-y-1 no-scrollbar text-xs font-sans">
-            {chapters.map((ch, idx) => (
-              <button
-                key={ch.id}
-                id={`btn-chapter-select-${idx}`}
-                onClick={() => {
-                  setSuppressAnimation(true);
-                  setCurrentChapterIdx(idx);
-                  setShowChapterIndex(false);
-                }}
-                className={`w-full text-left p-2 rounded-sm transition-colors flex items-center justify-between cursor-pointer ${
-                  idx === currentChapterIdx
-                    ? "bg-black dark:bg-white text-white dark:text-black font-bold"
-                    : "text-neutral-750 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/5"
-                }`}
-              >
-                <span className="truncate mr-3">{ch.title}</span>
-                {idx === currentChapterIdx && <span className="text-[8px] uppercase tracking-wider font-bold opacity-60">(Active)</span>}
-              </button>
-            ))}
-          </div>
         </div>
       )}
 
@@ -946,7 +889,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           onClose={() => setAiState((prev) => ({ ...prev, visible: false }))}
           onRetry={() => {
             if (aiState.type === "summarize") handleSummarizeChapter();
-            else handleSelectionAction(aiState.type);
+            else handleSelectionAction(aiState.type, undefined, aiState.inputText);
           }}
         />
       )}
@@ -954,14 +897,14 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       {/* 4. Selection Floating Menu Overlay */}
       <SelectionMenu
         onAction={handleSelectionAction}
-        onClose={() => setSelectionActive(false)}
+        onClose={() => {}}
       />
       {/* 5. Clean Reader Column stage */}
       <div
         ref={containerRef}
         id="reader-scroll-viewport"
         style={{
-          width: viewportMaxWidthStr,
+          width: viewportWidthStr,
         }}
         className={`absolute left-1/2 -translate-x-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar transition-all duration-300 ${viewportTopClass} ${viewportBottomClass}`}
       >
@@ -969,7 +912,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           style={{
             width: "100%",
             maxWidth: "100%",
-            transform: `translate3d(-${chapterPageIndex * (viewportWidth + 48)}px, 0, 0)`,
+            transform: `translate3d(-${chapterPageIndex * (viewportWidth + COLUMN_GAP)}px, 0, 0)`,
             transition: suppressAnimation 
               ? "opacity 0.15s ease-in-out" 
               : "transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease-in-out",
@@ -986,8 +929,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
               fontSize: `${settings.fontSize}px`,
               lineHeight: settings.lineHeight,
               fontFamily: settings.fontFamily === "Source Serif" ? "'Source Serif 4', Georgia, serif" : `'${settings.fontFamily}', Georgia, serif`,
-              columnCount: columnCount,
-              columnGap: "48px",
+              columnCount: visiblePageCount,
+              columnGap: `${COLUMN_GAP}px`,
               height: "100%",
               columnFill: "auto",
             }}
@@ -1018,8 +961,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       </div>
 
       {/* 8. Custom Right Edge Chapter Scrollbar & Hover Drawer */}
-      {chapters.length > 1 && (
+      {chapters.length > 1 && !showTypography && !aiState.visible && (
         <div
+          id="chapter-edge-nav"
           className={`fixed right-0 top-1/2 -translate-y-1/2 z-50 flex items-center pr-2 transition-all duration-300 ${
             showChapterBarPanel ? "pl-80 py-10" : "pl-10 py-10"
           }`}
@@ -1049,6 +993,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
                   ref={idx === currentChapterIdx ? activeChapterRef : null}
                   onClick={() => {
                     setSuppressAnimation(true);
+                    setPendingPageAction("first");
                     setCurrentChapterIdx(idx);
                   }}
                   className={`w-full text-left px-3 py-2 rounded-lg text-xs truncate transition-all cursor-pointer ${
@@ -1078,6 +1023,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
                 key={idx}
                 onClick={() => {
                   setSuppressAnimation(true);
+                  setPendingPageAction("first");
                   setCurrentChapterIdx(idx);
                 }}
                 className={`h-[2px] transition-all duration-200 rounded-full ${
