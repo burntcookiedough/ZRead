@@ -23,6 +23,8 @@
           "path": "$APPDATA/books/*"
         }
       ]
-    }
+    },
+    "sql:default",
+    "sql:allow-execute"
   ]
 }

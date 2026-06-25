@@ -4,8 +4,10 @@
  */
 
 import { useState, useEffect } from "react";
+import { isTauriRuntime } from "@/app/runtime";
 import LibraryView from "./components/library/LibraryView";
 import ReaderView from "./components/reader/ReaderView";
+import { initializeDesktopDatabase } from "./features/storage/desktopSqliteStorage";
 
 export default function App() {
   const [selectedBookId, setSelectedBookId] = useState<string | null>(null);
@@ -27,6 +29,14 @@ export default function App() {
       document.documentElement.classList.remove("dark");
     }
   }, [theme]);
+
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+
+    initializeDesktopDatabase()
+      .then(() => console.info("Desktop SQLite health check passed."))
+      .catch((err) => console.error("Desktop SQLite health check failed:", err));
+  }, []);
 
   // Monitor deep URL links or single-session resets
   useEffect(() => {
