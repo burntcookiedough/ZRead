@@ -46,28 +46,18 @@ async function saveBookFile(bookId: string, fileData: ArrayBuffer): Promise<void
 
 async function getBookFile(bookId: string): Promise<ArrayBuffer | null> {
   const bookPath = getBookPath(bookId);
-
-  try {
-    const { BaseDirectory, exists, readFile } = await getFs();
-    const fileExists = await exists(bookPath, { baseDir: BaseDirectory.AppData });
-    if (fileExists) {
-      const bytes = await readFile(bookPath, { baseDir: BaseDirectory.AppData });
-      return toArrayBuffer(bytes);
-    }
-  } catch (err) {
-    console.warn("Failed to read app-owned EPUB copy; falling back to IndexedDB.", err);
+  const { BaseDirectory, exists, readFile } = await getFs();
+  const fileExists = await exists(bookPath, { baseDir: BaseDirectory.AppData });
+  if (fileExists) {
+    const bytes = await readFile(bookPath, { baseDir: BaseDirectory.AppData });
+    return toArrayBuffer(bytes);
   }
 
   return indexedDbStorage.getBookFile(bookId);
 }
 
 async function deleteBookFile(bookId: string): Promise<void> {
-  try {
-    await deleteAppOwnedBookFile(bookId);
-  } catch (err) {
-    console.warn("Failed to delete app-owned EPUB copy.", err);
-  }
-
+  await deleteAppOwnedBookFile(bookId);
   await indexedDbStorage.deleteBookFile(bookId);
 }
 
