@@ -269,7 +269,7 @@ V1 requires native EPUB import through a desktop file picker.
 Current status:
 
 ```text
-not implemented
+Phase 4A.1 implemented: desktop runtime opens a native EPUB picker and imports the selected file through the existing parse/save flow.
 ```
 
 ### App-Owned EPUB Copy Into App Data
@@ -279,7 +279,7 @@ V1 requires imported EPUBs to be copied into ZRead app data.
 Current status:
 
 ```text
-not implemented
+not implemented; Phase 4A.1 still stores imported EPUB bytes through the existing storage.saveBookFile path.
 ```
 
 Current risk:
