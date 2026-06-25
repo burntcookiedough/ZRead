@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { Book, Highlight, SavedWord, ReaderSettings, ReaderTheme } from "../../types";
 import { storage } from "@/features/storage";
 import { parseEpub, loadChapterContent, ParsedBook, ParsedChapter } from "../../utils/epubParser";
@@ -19,6 +19,9 @@ interface ReaderViewProps {
 }
 
 const COLUMN_GAP = 48;
+const PAGE_TURN_TRANSITION = "transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease-in-out";
+const PAGE_LAYOUT_REMEASURE_MS = 340;
+const PAGE_LAYOUT_TRANSITION = "transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), top 0.3s ease, bottom 0.3s ease";
 
 /**
  * Renders an EPUB reading surface with paginated navigation, reader settings, annotations, and AI actions.
@@ -40,6 +43,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const [pendingPageAction, setPendingPageAction] = useState<"first" | "last" | "restore" | null>("restore");
   const [suppressAnimation, setSuppressAnimation] = useState(true);
   const [layoutSettled, setLayoutSettled] = useState(false);
+  const [viewportScaleX, setViewportScaleX] = useState(1);
+  const [isViewportScaleAnimating, setIsViewportScaleAnimating] = useState(false);
   const [showChapterBarPanel, setShowChapterBarPanel] = useState(false);
   const [showChapterLines, setShowChapterLines] = useState(false);
 
@@ -140,6 +145,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const containerRef = useRef<HTMLDivElement>(null);
   const chapterPageIndexRef = useRef(chapterPageIndex);
   const currentBookMetaRef = useRef(currentBookMeta);
+  const settingsLayoutTimerRef = useRef<number | null>(null);
+  const settingsLayoutFrameRef = useRef<number | null>(null);
   useEffect(() => {
     chapterPageIndexRef.current = chapterPageIndex;
   }, [chapterPageIndex]);
@@ -147,6 +154,17 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   useEffect(() => {
     currentBookMetaRef.current = currentBookMeta;
   }, [currentBookMeta]);
+
+  useEffect(() => {
+    return () => {
+      if (settingsLayoutTimerRef.current) {
+        window.clearTimeout(settingsLayoutTimerRef.current);
+      }
+      if (settingsLayoutFrameRef.current) {
+        window.cancelAnimationFrame(settingsLayoutFrameRef.current);
+      }
+    };
+  }, []);
 
   /**
    * Measures the rendered chapter width and converts it into page-count metadata.
@@ -173,6 +191,27 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
     return Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
   }, []);
+
+  const getViewportWidthForSettings = useCallback((candidateSettings: ReaderSettings) => {
+    if (typeof window === "undefined") return candidateSettings.contentWidth;
+
+    const isNarrowViewport = window.innerWidth < 768;
+    const pageCount = candidateSettings.viewMode === "split" && !isNarrowViewport ? 2 : 1;
+    const maxWidth = candidateSettings.contentWidth * pageCount + (pageCount - 1) * COLUMN_GAP;
+    const availableWidth = isNarrowViewport ? window.innerWidth - 32 : window.innerWidth - 96;
+    return Math.max(0, Math.min(availableWidth, maxWidth));
+  }, []);
+
+  const restorePageAfterSettingsLayout = useCallback(() => {
+    const metrics = getPaginationMetrics();
+    if (!metrics) return;
+
+    const { viewport, total } = metrics;
+    const targetPage = pageForSavedPercent(total);
+    setViewportWidth(viewport);
+    setTotalChapterPages(total);
+    setChapterPageIndex(targetPage);
+  }, [getPaginationMetrics, pageForSavedPercent]);
 
   const activeChapterRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -483,7 +522,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   /**
    * Produces the chapter HTML with reader-managed highlights and the optional front-cover header.
    */
-  const getRenderHtml = () => {
+  const renderedChapterHtml = useMemo(() => {
     let content = chapterContent;
     if (!content) return "";
     
@@ -568,7 +607,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }
 
     return content;
-  };
+  }, [chapterContent, currentChapterIdx, highlights, parsedBook]);
 
   // Handle direct click on highlights within the XHTML document to delete them
   /**
@@ -804,9 +843,45 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
    * Persists typography and layout settings while prompting pagination to settle again.
    */
   const handleSettingsChange = (newSettings: ReaderSettings) => {
+    const currentViewportWidth = containerRef.current?.clientWidth || 0;
+    const nextViewportWidth = getViewportWidthForSettings(newSettings);
+    const shouldAnimateViewportScale =
+      currentViewportWidth > 0 &&
+      nextViewportWidth > 0 &&
+      Math.abs(currentViewportWidth - nextViewportWidth) > 1;
+
     setSuppressAnimation(true);
+    if (settingsLayoutFrameRef.current) {
+      window.cancelAnimationFrame(settingsLayoutFrameRef.current);
+      settingsLayoutFrameRef.current = null;
+    }
+    if (shouldAnimateViewportScale) {
+      setIsViewportScaleAnimating(true);
+      setViewportScaleX(currentViewportWidth / nextViewportWidth);
+      settingsLayoutFrameRef.current = window.requestAnimationFrame(() => {
+        settingsLayoutFrameRef.current = window.requestAnimationFrame(() => {
+          setViewportScaleX(1);
+          settingsLayoutFrameRef.current = null;
+        });
+      });
+    } else {
+      setIsViewportScaleAnimating(false);
+      setViewportScaleX(1);
+    }
+
     setSettings(newSettings);
     storage.saveReaderSettings(newSettings);
+
+    if (settingsLayoutTimerRef.current) {
+      window.clearTimeout(settingsLayoutTimerRef.current);
+    }
+    settingsLayoutTimerRef.current = window.setTimeout(() => {
+      restorePageAfterSettingsLayout();
+      setIsViewportScaleAnimating(false);
+      setViewportScaleX(1);
+      setSuppressAnimation(false);
+      settingsLayoutTimerRef.current = null;
+    }, PAGE_LAYOUT_REMEASURE_MS);
   };
 
   // Theme map helper definitions
@@ -971,10 +1046,20 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       <div
         ref={containerRef}
         id="reader-scroll-viewport"
+        onTransitionEnd={(e) => {
+          if (e.currentTarget !== e.target || e.propertyName !== "transform" || !isViewportScaleAnimating) return;
+          restorePageAfterSettingsLayout();
+          setIsViewportScaleAnimating(false);
+          setSuppressAnimation(false);
+        }}
         style={{
           width: viewportWidthStr,
+          transform: `translateX(-50%) scaleX(${viewportScaleX})`,
+          transformOrigin: "center center",
+          transition: PAGE_LAYOUT_TRANSITION,
+          willChange: isViewportScaleAnimating ? "transform" : undefined,
         }}
-        className={`absolute left-1/2 -translate-x-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar transition-all duration-300 ${viewportTopClass} ${viewportBottomClass}`}
+        className={`absolute left-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar ${viewportTopClass} ${viewportBottomClass}`}
       >
         <div
           style={{
@@ -983,7 +1068,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
             transform: `translate3d(-${chapterPageIndex * (viewportWidth + COLUMN_GAP)}px, 0, 0)`,
             transition: suppressAnimation 
               ? "opacity 0.15s ease-in-out" 
-              : "transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease-in-out",
+              : PAGE_TURN_TRANSITION,
+            willChange: "transform",
+            backfaceVisibility: "hidden",
             opacity: (loading || !layoutSettled) ? 0 : 1,
           }}
           className="mx-auto px-0 h-full py-2 relative"
@@ -1003,7 +1090,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
               columnFill: "auto",
             }}
             className={`epub-content select-text font-serif leading-relaxed text-left antialiased focus:outline-none h-full`}
-            dangerouslySetInnerHTML={{ __html: getRenderHtml() }}
+            dangerouslySetInnerHTML={{ __html: renderedChapterHtml }}
           />
 
         </div>
