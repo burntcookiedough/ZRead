@@ -279,13 +279,14 @@ V1 requires imported EPUBs to be copied into ZRead app data.
 Current status:
 
 ```text
-not implemented; Phase 4A.1 still stores imported EPUB bytes through the existing storage.saveBookFile path.
+Phase 4A.2 implemented: desktop imports store EPUB bytes as app-owned files under the Tauri app data directory at books/<bookId>.epub.
 ```
 
-Current risk:
+Compatibility:
 
 ```text
-the app must not depend on the original user-selected file path after import
+desktop reads prefer the app-owned EPUB copy and fall back to the legacy IndexedDB book_files blob when the app-owned file is missing
+browser/web storage remains IndexedDB-backed
 ```
 
 ### SQLite / Filesystem Desktop Storage
@@ -301,9 +302,9 @@ Current status:
 
 ```text
 storage abstraction exists
-desktopStorage delegates to IndexedDB
+desktopStorage stores EPUB files in app data and delegates metadata/progress/highlights/saved words/settings to IndexedDB/localStorage
 SQLite not added
-filesystem storage not added
+filesystem metadata storage not added
 ```
 
 ### Backup / Export / Import
@@ -504,12 +505,12 @@ Additional non-goals from `docs/V1_SCOPE.md` remain in force.
 
 ## 6. Current Next Action
 
-Start Phase 4A only after this progress map is merged.
+Continue V1 desktop-local storage work after Phase 4A.2.
 
 Next issue:
 
 ```text
-Phase 4A native import + app-owned EPUB copy
+Phase 5 SQLite / filesystem metadata storage
 ```
 
 Acceptance focus:
@@ -519,7 +520,8 @@ native file picker works
 imported EPUB is copied into app data
 reader opens the app-owned EPUB copy
 original source file can move or disappear without breaking the imported book
-no SQLite added in Phase 4A unless explicitly scoped later
+legacy IndexedDB-backed books still open through fallback
+no SQLite added in Phase 4A
 no post-V1 features added
 ```
 
@@ -527,13 +529,11 @@ no post-V1 features added
 
 ## Current V1 Readiness
 
-ZRead has completed the V1 planning foundation, desktop shell foundation, storage abstraction foundation, reader bug-fix groundwork, basic CI, and repo hygiene.
+ZRead has completed the V1 planning foundation, desktop shell foundation, storage abstraction foundation, native picker import, app-owned EPUB copy, reader bug-fix groundwork, basic CI, and repo hygiene.
 
-ZRead is not V1-ready yet because the app does not yet meet the required desktop-local data model:
+ZRead is not V1-ready yet because the app does not yet meet the full required desktop-local data model and packaging/recovery requirements:
 
 ```text
-native file picker
-app-owned EPUB copy
 SQLite/filesystem storage
 backup/export/import
 Linux packaging verification
