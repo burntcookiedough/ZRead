@@ -20,6 +20,9 @@ interface ReaderViewProps {
 
 const COLUMN_GAP = 48;
 
+/**
+ * Renders an EPUB reading surface with paginated navigation, reader settings, annotations, and AI actions.
+ */
 export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps) {
   // EPUB Parser States
   const [parsedBook, setParsedBook] = useState<ParsedBook | null>(null);
@@ -83,6 +86,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     };
   }, []);
 
+  /**
+   * Detects controls and overlays whose clicks should not trigger immersive reader behavior.
+   */
   const isInteractiveTarget = (target: HTMLElement) => {
     return !!target.closest(
       "button, input, textarea, select, a, " +
@@ -91,6 +97,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     );
   };
 
+  /**
+   * Enters fullscreen only for direct reading-surface clicks, leaving controls interactive.
+   */
   const handleGlobalClick = (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
     if (isInteractiveTarget(target)) {
@@ -139,6 +148,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     currentBookMetaRef.current = currentBookMeta;
   }, [currentBookMeta]);
 
+  /**
+   * Measures the rendered chapter width and converts it into page-count metadata.
+   */
   const getPaginationMetrics = useCallback(() => {
     const container = containerRef.current;
     if (!container) return null;
@@ -154,6 +166,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     return { viewport, total };
   }, []);
 
+  /**
+   * Converts persisted chapter progress into a valid page index for the current layout.
+   */
   const pageForSavedPercent = useCallback((total: number) => {
     const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
     return Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
@@ -169,6 +184,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   }, [showChapterBarPanel, currentChapterIdx]);
 
   // Manage HUD show/hide timeouts
+  /**
+   * Keeps the HUD visible during interaction and hides it after reader inactivity.
+   */
   const refreshHudTimeout = useCallback(() => {
     setHudVisible(true);
     if (timerRef.current) clearTimeout(timerRef.current);
@@ -189,11 +207,17 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   }, [refreshHudTimeout]);
 
   // Handle Mouse Move anywhere to display HUD
+  /**
+   * Refreshes the HUD timer when the reader detects pointer movement.
+   */
   const handleMouseMove = () => {
     refreshHudTimeout();
   };
 
   // Trigger self-dismissing toast notifications
+  /**
+   * Displays a temporary reader notification, optionally with a single undo action.
+   */
   const showToast = (txt: string, onUndo?: () => void) => {
     if (toastTimeoutId) {
       clearTimeout(toastTimeoutId);
@@ -264,11 +288,17 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   }, [bookId]);
 
   // Read raw highlights for the current book
+  /**
+   * Reloads persisted highlights for the active book after a highlight mutation.
+   */
   const loadHighlights = async () => {
     const dbHighlights = await storage.getBookHighlights(bookId);
     setHighlights(dbHighlights);
   };
 
+  /**
+   * Reloads persisted saved vocabulary entries for the active book.
+   */
   const loadSavedWords = async () => {
     const dbWords = await storage.getBookSavedWords(bookId);
     setSavedWords(dbWords);
@@ -304,6 +334,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   }, [currentChapterIdx, parsedBook, chapters]);
 
   // Helper to save reading progress as percentage based on current page
+  /**
+   * Persists the reader's current chapter and page as percentage-based progress.
+   */
   const saveReadingProgress = (pageIdx: number, totalPages: number) => {
     if (!currentBookMeta) return;
     const percent = totalPages > 1 ? (pageIdx / (totalPages - 1)) * 100 : 0;
@@ -326,6 +359,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   };
 
   // Centralized page turning handlers
+  /**
+   * Advances within the chapter or moves to the first page of the next chapter.
+   */
   const handleNextPage = () => {
     if (chapterPageIndex < totalChapterPages - 1) {
       const nextP = chapterPageIndex + 1;
@@ -343,6 +379,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }
   };
 
+  /**
+   * Moves backward within the chapter or to the last page of the previous chapter.
+   */
   const handlePrevPage = () => {
     if (chapterPageIndex > 0) {
       const prevP = chapterPageIndex - 1;
@@ -361,6 +400,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   };
 
   // Recalculates horizontal scroll offset on window resize
+  /**
+   * Recomputes pagination after viewport changes while preserving the current page when possible.
+   */
   const recalculatePages = useCallback(() => {
     setSuppressAnimation(true);
     const metrics = getPaginationMetrics();
@@ -438,6 +480,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   }, [loading, chapterContent, pendingPageAction, settings, currentChapterIdx, getPaginationMetrics, pageForSavedPercent]);
 
   // Highlights injector implementation
+  /**
+   * Produces the chapter HTML with reader-managed highlights and the optional front-cover header.
+   */
   const getRenderHtml = () => {
     let content = chapterContent;
     if (!content) return "";
@@ -526,6 +571,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   };
 
   // Handle direct click on highlights within the XHTML document to delete them
+  /**
+   * Handles direct interactions inside chapter HTML, including highlight deletion.
+   */
   const handleChapterClick = async (e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
     const highlightId = target.getAttribute("data-highlight-id");
@@ -544,11 +592,17 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   };
 
   // Text selection handler callbacks from floating SelectionMenu
+  /**
+   * Formats optional-AI failures without implying that offline reading actions are broken.
+   */
   const getAIErrorMessage = (err: any, actionLabel: string) => {
     const detail = err?.message ? `${err.message} ` : "";
     return `${detail}${actionLabel} is unavailable. Reading, copy, save, and highlight still work offline.`;
   };
 
+  /**
+   * Applies the selected-text command requested by the floating selection menu.
+   */
   const handleSelectionAction = async (
     action: "copy" | "define" | "explain" | "save" | "highlight",
     extra?: string,
@@ -714,6 +768,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   }, [showTypography, aiState.visible, currentChapterIdx, chapters, chapterPageIndex, totalChapterPages]);
 
   // Chapter Summarization callback (from HUD sparking action)
+  /**
+   * Sends the current chapter text to the optional AI summarizer and displays the result.
+   */
   const handleSummarizeChapter = async () => {
     if (!chapterContent) return;
     
@@ -743,6 +800,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   };
 
   // Change font sizes helper
+  /**
+   * Persists typography and layout settings while prompting pagination to settle again.
+   */
   const handleSettingsChange = (newSettings: ReaderSettings) => {
     setSuppressAnimation(true);
     setSettings(newSettings);
@@ -750,6 +810,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   };
 
   // Theme map helper definitions
+  /**
+   * Maps the persisted reader theme to the wrapper, header, and footer class groups.
+   */
   const getThemeClass = (t: ReaderTheme) => {
     switch (t) {
       case "light":

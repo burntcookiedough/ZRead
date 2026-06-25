@@ -11,6 +11,9 @@ interface SelectionMenuProps {
   onClose: () => void;
 }
 
+/**
+ * Shows contextual actions for selected reader text and forwards the captured selection to callers.
+ */
 export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps) {
   const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
   const [selectedText, setSelectedText] = useState("");
@@ -23,6 +26,9 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
   ];
 
   useEffect(() => {
+    /**
+     * Tracks the active text selection and positions the floating menu above reader content.
+     */
     const handleSelectionChange = () => {
       const selection = window.getSelection();
       if (!selection || selection.rangeCount === 0) {
@@ -78,6 +84,9 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
   useEffect(() => {
     if (!coords || !selectedText) return;
 
+    /**
+     * Handles keyboard shortcuts for the currently visible selection menu.
+     */
     const handleKeyDown = (e: KeyboardEvent) => {
       // Escape closes current floating state
       if (e.key === "Escape") {

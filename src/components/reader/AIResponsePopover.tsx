@@ -15,6 +15,9 @@ interface AIResponsePopoverProps {
   onRetry: () => void;
 }
 
+/**
+ * Renders the floating AI result panel used for definitions, explanations, and chapter summaries.
+ */
 export default function AIResponsePopover({
   type,
   inputText,
