@@ -89,7 +89,8 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
       // Case-insensitive matching
       const key = e.key.toLowerCase();
       if ((e.ctrlKey || e.metaKey) && key === "c") {
-        onAction("copy", undefined, selectedText);
+        // Let the browser's native copy run; avoid a duplicate clipboard write and false failure toast.
+        return;
       } else if (key === "c") {
         e.preventDefault();
         onAction("copy", undefined, selectedText);

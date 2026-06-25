@@ -129,7 +129,12 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const [toastTimeoutId, setToastTimeoutId] = useState<any>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const chapterPageIndexRef = useRef(chapterPageIndex);
   const currentBookMetaRef = useRef(currentBookMeta);
+  useEffect(() => {
+    chapterPageIndexRef.current = chapterPageIndex;
+  }, [chapterPageIndex]);
+
   useEffect(() => {
     currentBookMetaRef.current = currentBookMeta;
   }, [currentBookMeta]);
@@ -363,13 +368,13 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     const { viewport, total } = metrics;
     setViewportWidth(viewport);
     setTotalChapterPages(total);
-    const targetPage = Math.min(total - 1, chapterPageIndex);
+    const targetPage = Math.min(total - 1, chapterPageIndexRef.current);
     setChapterPageIndex(targetPage);
 
     setTimeout(() => {
       setSuppressAnimation(false);
     }, 50);
-  }, [chapterPageIndex, getPaginationMetrics]);
+  }, [getPaginationMetrics]);
 
   // Window resize handler
   useEffect(() => {
@@ -393,7 +398,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       setViewportWidth(viewport);
       setTotalChapterPages(total);
 
-      let targetPage = chapterPageIndex;
+      let targetPage = chapterPageIndexRef.current;
       if (pendingPageAction === "last") {
         targetPage = total - 1;
       } else if (pendingPageAction === "first") {
@@ -401,7 +406,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       } else if (pendingPageAction === "restore") {
         targetPage = pageForSavedPercent(total);
       } else {
-        targetPage = Math.min(total - 1, Math.max(0, chapterPageIndex));
+        targetPage = Math.min(total - 1, Math.max(0, chapterPageIndexRef.current));
       }
 
       setChapterPageIndex(targetPage);
@@ -430,7 +435,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }, 150);
 
     return () => clearTimeout(timer);
-  }, [loading, chapterContent, pendingPageAction, settings, currentChapterIdx, chapterPageIndex, getPaginationMetrics, pageForSavedPercent]);
+  }, [loading, chapterContent, pendingPageAction, settings, currentChapterIdx, getPaginationMetrics, pageForSavedPercent]);
 
   // Highlights injector implementation
   const getRenderHtml = () => {
