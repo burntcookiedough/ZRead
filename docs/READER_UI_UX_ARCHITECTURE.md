@@ -92,6 +92,12 @@ Rules:
 - Keep theme names and available UI options aligned. If the type supports `warm` or `muted`, the settings UI and token map must either support them deliberately or remove them from the exposed model.
 - Prefer CSS custom properties bound at the Reader shell root, then consume those tokens in Reader components.
 
+PR B progress note:
+
+- Shared Reader tokens are introduced before ReaderView consumes them.
+- Existing EPUB media CSS remains behaviorally unchanged in PR B.
+- The current hard-coded EPUB media filter should move behind `reader.epubMediaFilter` during PR E when media sizing rules are implemented.
+
 Expected token categories:
 
 ```text
