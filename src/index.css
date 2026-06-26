@@ -6,6 +6,68 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+/* Reader design tokens. These are inert until a reader shell binds a theme class. */
+:root,
+.reader-theme-light {
+  --reader-bg: #ffffff;
+  --reader-text: #0a0a0a;
+  --reader-text-muted: rgba(10, 10, 10, 0.56);
+  --reader-panel-bg: rgba(255, 255, 255, 0.96);
+  --reader-panel-border: rgba(10, 10, 10, 0.12);
+  --reader-control-bg: rgba(10, 10, 10, 0.035);
+  --reader-control-hover-bg: rgba(10, 10, 10, 0.08);
+  --reader-control-border: rgba(10, 10, 10, 0.14);
+  --reader-focus-ring: rgba(10, 10, 10, 0.42);
+  --reader-progress: #0a0a0a;
+  --reader-selection: rgba(147, 197, 253, 0.35);
+  --reader-epub-media-filter: grayscale(100%) contrast(1.15);
+}
+
+.reader-theme-dark {
+  --reader-bg: #000000;
+  --reader-text: #ffffff;
+  --reader-text-muted: rgba(255, 255, 255, 0.58);
+  --reader-panel-bg: rgba(23, 23, 23, 0.96);
+  --reader-panel-border: rgba(255, 255, 255, 0.12);
+  --reader-control-bg: rgba(255, 255, 255, 0.06);
+  --reader-control-hover-bg: rgba(255, 255, 255, 0.11);
+  --reader-control-border: rgba(255, 255, 255, 0.14);
+  --reader-focus-ring: rgba(255, 255, 255, 0.5);
+  --reader-progress: #ffffff;
+  --reader-selection: rgba(147, 197, 253, 0.35);
+  --reader-epub-media-filter: grayscale(100%) contrast(1.15);
+}
+
+.reader-theme-warm {
+  --reader-bg: #fbf6ec;
+  --reader-text: #1f1a14;
+  --reader-text-muted: rgba(31, 26, 20, 0.58);
+  --reader-panel-bg: rgba(251, 246, 236, 0.96);
+  --reader-panel-border: rgba(31, 26, 20, 0.13);
+  --reader-control-bg: rgba(31, 26, 20, 0.045);
+  --reader-control-hover-bg: rgba(31, 26, 20, 0.09);
+  --reader-control-border: rgba(31, 26, 20, 0.15);
+  --reader-focus-ring: rgba(31, 26, 20, 0.42);
+  --reader-progress: #1f1a14;
+  --reader-selection: rgba(180, 137, 88, 0.3);
+  --reader-epub-media-filter: sepia(8%) contrast(1.05);
+}
+
+.reader-theme-muted {
+  --reader-bg: #111111;
+  --reader-text: #efefef;
+  --reader-text-muted: rgba(239, 239, 239, 0.6);
+  --reader-panel-bg: rgba(28, 28, 28, 0.96);
+  --reader-panel-border: rgba(239, 239, 239, 0.13);
+  --reader-control-bg: rgba(239, 239, 239, 0.06);
+  --reader-control-hover-bg: rgba(239, 239, 239, 0.11);
+  --reader-control-border: rgba(239, 239, 239, 0.15);
+  --reader-focus-ring: rgba(239, 239, 239, 0.48);
+  --reader-progress: #efefef;
+  --reader-selection: rgba(147, 197, 253, 0.32);
+  --reader-epub-media-filter: grayscale(100%) contrast(1.1);
+}
+
 /* Base resets & theme styles */
 body {
   font-family: var(--font-sans);
