@@ -12,6 +12,7 @@ import SelectionMenu from "./SelectionMenu";
 import AIResponsePopover from "./AIResponsePopover";
 import { triggerAIAction } from "../../utils/aiClient";
 import { ChapterRail, ReaderFooter, ReaderSettingsPanel, ReaderShell } from "./index";
+import { useReaderLayout } from "./hooks/useReaderLayout";
 
 interface ReaderViewProps {
   bookId: string;
@@ -33,13 +34,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Page Navigation States
-  const [chapterPageIndex, setChapterPageIndex] = useState(0);
-  const [totalChapterPages, setTotalChapterPages] = useState(1);
-  const [viewportWidth, setViewportWidth] = useState(0);
-  const [pendingPageAction, setPendingPageAction] = useState<"first" | "last" | "restore" | null>("restore");
-  const [suppressAnimation, setSuppressAnimation] = useState(true);
-  const [layoutSettled, setLayoutSettled] = useState(false);
+  // Reader navigation and layout states
   const [showChapterBarPanel, setShowChapterBarPanel] = useState(false);
   const [showChapterLines, setShowChapterLines] = useState(false);
 
@@ -137,42 +132,58 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const [notification, setNotification] = useState<{ text: string; onUndo?: () => void } | null>(null);
   const [toastTimeoutId, setToastTimeoutId] = useState<any>(null);
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chapterPageIndexRef = useRef(chapterPageIndex);
   const currentBookMetaRef = useRef(currentBookMeta);
-  useEffect(() => {
-    chapterPageIndexRef.current = chapterPageIndex;
-  }, [chapterPageIndex]);
 
   useEffect(() => {
     currentBookMetaRef.current = currentBookMeta;
   }, [currentBookMeta]);
 
   /**
-   * Measures the rendered chapter width and converts it into page-count metadata.
+   * Persists settled layout progress after measurement completes.
    */
-  const getPaginationMetrics = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return null;
+  const saveSettledLayoutProgress = useCallback((unitIndex: number, unitCount: number) => {
+    const meta = currentBookMetaRef.current;
+    if (!meta) return;
 
-    const viewport = container.clientWidth;
-    if (viewport <= 0) return null;
+    const percent = unitCount > 1 ? (unitIndex / (unitCount - 1)) * 100 : 0;
+    const updatedMeta: Book = {
+      ...meta,
+      lastOpenedAt: new Date().toISOString(),
+      progress: {
+        chapterIndex: currentChapterIdx,
+        scrollPercent: Number(percent.toFixed(2)),
+      },
+    };
+    setCurrentBookMeta(updatedMeta);
+    storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
+  }, [currentChapterIdx]);
 
-    const content = container.querySelector<HTMLElement>("#reader-chapter-body");
-    const scrollWidth = content?.scrollWidth || container.scrollWidth;
-    const stride = viewport + COLUMN_GAP;
-    const total = Math.max(1, Math.ceil((scrollWidth + COLUMN_GAP) / stride));
+  const {
+    containerRef,
+    unitIndex,
+    setUnitIndex,
+    unitCount,
+    viewportWidth,
+    unitStride,
+    unitsPerViewport,
+    layoutSettled,
+    suppressAnimation,
+    setSuppressAnimation,
+    setPendingPageAction,
+    viewportWidthStyle,
+    markLayoutUnsettled,
+  } = useReaderLayout({
+    loading,
+    chapterContent,
+    settings,
+    currentChapterIdx,
+    sourcePercent: currentBookMeta?.progress?.scrollPercent || 0,
+    columnGap: COLUMN_GAP,
+    onLayoutSettled: saveSettledLayoutProgress,
+  });
 
-    return { viewport, total };
-  }, []);
-
-  /**
-   * Converts persisted chapter progress into a valid page index for the current layout.
-   */
-  const pageForSavedPercent = useCallback((total: number) => {
-    const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
-    return Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
-  }, []);
+  const chapterPageIndex = unitIndex;
+  const totalChapterPages = unitCount;
 
   const activeChapterRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -244,20 +255,20 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
         // 2. Parse EPUB Structure
         const parsed = await parseEpub(fileBytes);
-        setParsedBook(parsed);
-        setChapters(parsed.chapters);
 
         // 3. Load Book Metadata (from IDB)
         const booksList = await storage.getAllBooks();
         const thisBook = booksList.find((b) => b.id === bookId);
 
         if (thisBook) {
-          setCurrentBookMeta(thisBook);
-          // Restore last chapter index
           const lastIdx = thisBook.progress ? thisBook.progress.chapterIndex : 0;
-          setCurrentChapterIdx(
-            lastIdx >= 0 && lastIdx < parsed.chapters.length ? lastIdx : 0
-          );
+          const restoredChapterIdx =
+            lastIdx >= 0 && lastIdx < parsed.chapters.length ? lastIdx : 0;
+
+          setParsedBook(parsed);
+          setChapters(parsed.chapters);
+          setCurrentBookMeta(thisBook);
+          setCurrentChapterIdx(restoredChapterIdx);
         } else {
           throw new Error("Metadata for selected book not found.");
         }
@@ -311,8 +322,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     const loadChapter = async () => {
       try {
         setLoading(true);
-        setLayoutSettled(false);
-        setSuppressAnimation(true);
+        markLayoutUnsettled();
         const activeChapter = chapters[currentChapterIdx];
         
         // Load, rewrite images, scrape styles
@@ -331,7 +341,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     };
 
     loadChapter();
-  }, [currentChapterIdx, parsedBook, chapters]);
+  }, [currentChapterIdx, parsedBook, chapters, markLayoutUnsettled, containerRef]);
 
   // Helper to save reading progress as percentage based on current page
   /**
@@ -366,7 +376,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     if (chapterPageIndex < totalChapterPages - 1) {
       const nextP = chapterPageIndex + 1;
       setSuppressAnimation(false);
-      setChapterPageIndex(nextP);
+      setUnitIndex(nextP);
       saveReadingProgress(nextP, totalChapterPages);
     } else {
       if (currentChapterIdx < chapters.length - 1) {
@@ -386,7 +396,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     if (chapterPageIndex > 0) {
       const prevP = chapterPageIndex - 1;
       setSuppressAnimation(false);
-      setChapterPageIndex(prevP);
+      setUnitIndex(prevP);
       saveReadingProgress(prevP, totalChapterPages);
     } else {
       if (currentChapterIdx > 0) {
@@ -398,86 +408,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       }
     }
   };
-
-  // Recalculates horizontal scroll offset on window resize
-  /**
-   * Recomputes pagination after viewport changes while preserving the current page when possible.
-   */
-  const recalculatePages = useCallback(() => {
-    setSuppressAnimation(true);
-    const metrics = getPaginationMetrics();
-    if (!metrics) return;
-    const { viewport, total } = metrics;
-    setViewportWidth(viewport);
-    setTotalChapterPages(total);
-    const targetPage = Math.min(total - 1, chapterPageIndexRef.current);
-    setChapterPageIndex(targetPage);
-
-    setTimeout(() => {
-      setSuppressAnimation(false);
-    }, 50);
-  }, [getPaginationMetrics]);
-
-  // Window resize handler
-  useEffect(() => {
-    const handleResize = () => {
-      setSuppressAnimation(true);
-      recalculatePages();
-    };
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [recalculatePages]);
-
-  // Recalculate pages and scroll position when chapter finishes loading or settings change
-  useEffect(() => {
-    if (loading || !chapterContent || !containerRef.current) return;
-
-    const timer = setTimeout(() => {
-      const metrics = getPaginationMetrics();
-      if (!metrics) return;
-      const { viewport, total } = metrics;
-
-      setViewportWidth(viewport);
-      setTotalChapterPages(total);
-
-      let targetPage = chapterPageIndexRef.current;
-      if (pendingPageAction === "last") {
-        targetPage = total - 1;
-      } else if (pendingPageAction === "first") {
-        targetPage = 0;
-      } else if (pendingPageAction === "restore") {
-        targetPage = pageForSavedPercent(total);
-      } else {
-        targetPage = Math.min(total - 1, Math.max(0, chapterPageIndexRef.current));
-      }
-
-      setChapterPageIndex(targetPage);
-      setPendingPageAction(null);
-      
-      // Save progress immediately
-      const percent = total > 1 ? (targetPage / (total - 1)) * 100 : 0;
-      const meta = currentBookMetaRef.current;
-      if (meta) {
-        const updatedMeta: Book = {
-          ...meta,
-          lastOpenedAt: new Date().toISOString(),
-          progress: {
-            chapterIndex: currentChapterIdx,
-            scrollPercent: Number(percent.toFixed(2)),
-          },
-        };
-        setCurrentBookMeta(updatedMeta);
-        storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
-      }
-
-      setLayoutSettled(true);
-      setTimeout(() => {
-        setSuppressAnimation(false);
-      }, 50);
-    }, 150);
-
-    return () => clearTimeout(timer);
-  }, [loading, chapterContent, pendingPageAction, settings, currentChapterIdx, getPaginationMetrics, pageForSavedPercent]);
 
   // Highlights injector implementation
   /**
@@ -804,7 +734,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
    * Persists typography and layout settings while prompting pagination to settle again.
    */
   const handleSettingsChange = (newSettings: ReaderSettings) => {
-    setSuppressAnimation(true);
+    markLayoutUnsettled();
     setSettings(newSettings);
     storage.saveReaderSettings(newSettings);
   };
@@ -861,12 +791,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   const themeStyle = getThemeClass(settings.theme);
   const activeChapter = chapters[currentChapterIdx];
-  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
-  const visiblePageCount = settings.viewMode === "split" && !isMobile ? 2 : 1;
-  const viewportMaxWidth = settings.contentWidth * visiblePageCount + (visiblePageCount - 1) * COLUMN_GAP;
-  const viewportWidthStr = isMobile
-    ? `min(calc(100vw - 32px), ${settings.contentWidth}px)`
-    : `min(calc(100vw - 96px), ${viewportMaxWidth}px)`;
+  const visiblePageCount = unitsPerViewport;
   const viewportTopClass = isFullscreen ? "top-6" : "top-16";
   const viewportBottomClass = isFullscreen ? "bottom-6" : "bottom-12";
 
@@ -916,7 +841,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         ref={containerRef}
         id="reader-scroll-viewport"
         style={{
-          width: viewportWidthStr,
+          width: viewportWidthStyle,
         }}
         className={`absolute left-1/2 -translate-x-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar transition-all duration-300 ${viewportTopClass} ${viewportBottomClass}`}
       >
@@ -924,7 +849,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           style={{
             width: "100%",
             maxWidth: "100%",
-            transform: `translate3d(-${chapterPageIndex * (viewportWidth + COLUMN_GAP)}px, 0, 0)`,
+            transform: `translate3d(-${chapterPageIndex * unitStride}px, 0, 0)`,
             transition: suppressAnimation 
               ? "opacity 0.15s ease-in-out" 
               : "transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease-in-out",
