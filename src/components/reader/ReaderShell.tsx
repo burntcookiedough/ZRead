@@ -46,6 +46,7 @@ export default function ReaderShell({
     >
       <div
         id="reader-hud-header"
+        inert={!hudVisible}
         className={`absolute top-0 left-0 right-0 h-16 border-b flex items-center justify-between px-4 sm:px-6 z-40 backdrop-blur-sm transition-all duration-150 ${
           hudVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4 pointer-events-none"
         } ${themeStyle.header}`}

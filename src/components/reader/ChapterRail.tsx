@@ -93,6 +93,7 @@ export default function ChapterRail({
       >
         <nav
           aria-label="Book chapters"
+          inert={!showChapterBarPanel}
           className={`mr-3 w-64 max-h-[60dvh] overflow-y-auto rounded-sm p-3 shadow-xl border transition-all duration-150 motion-reduce:transition-none no-scrollbar xl:w-72 ${
             showChapterBarPanel
               ? "opacity-100 translate-x-0 pointer-events-auto"
@@ -126,6 +127,7 @@ export default function ChapterRail({
         </nav>
 
         <div
+          inert={!showChapterLines}
           className={`flex flex-col items-center justify-between py-2 px-1 transition-all duration-150 motion-reduce:transition-none ${
             showChapterLines ? "opacity-100 translate-x-0" : "opacity-0 translate-x-2 pointer-events-none"
           }`}

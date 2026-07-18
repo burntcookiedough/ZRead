@@ -51,14 +51,13 @@ export function useReaderLayout({
   const [pageIndex, setPageIndexState] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [viewportWidth, setViewportWidth] = useState(0);
-  const [maxPageOffset, setMaxPageOffset] = useState(0);
-  const [layoutSettled, setLayoutSettled] = useState(false);
   const [suppressAnimation, setSuppressAnimation] = useState(true);
   const pageIndexRef = useRef(pageIndex);
   const sourcePercentRef = useRef(sourcePercent);
   const pendingPageActionRef = useRef(pendingPageAction);
-  const layoutSettledRef = useRef(layoutSettled);
+  const layoutSettledRef = useRef(false);
   const isSettlingRef = useRef(false);
+  const settleFrameRef = useRef<number | null>(null);
   const resizeFrameRef = useRef<number | null>(null);
   const lastSettledRef = useRef({
     key: "",
@@ -68,6 +67,14 @@ export function useReaderLayout({
 
   sourcePercentRef.current = sourcePercent;
   pendingPageActionRef.current = pendingPageAction;
+
+  const cancelSettleFrame = useCallback(() => {
+    if (settleFrameRef.current !== null) {
+      cancelAnimationFrame(settleFrameRef.current);
+      settleFrameRef.current = null;
+    }
+    isSettlingRef.current = false;
+  }, []);
 
   const getPaginationMetrics = useCallback((): PaginationMetrics | null => {
     const container = containerRef.current;
@@ -92,16 +99,16 @@ export function useReaderLayout({
       isSettlingRef.current = true;
       setSuppressAnimation(true);
       layoutSettledRef.current = false;
-      setLayoutSettled(false);
 
-      requestAnimationFrame(() => {
+      settleFrameRef.current = requestAnimationFrame(() => {
+        settleFrameRef.current = null;
         const metrics = getPaginationMetrics();
         if (!metrics) {
           isSettlingRef.current = false;
           return;
         }
 
-        const { viewport, height, maxOffset, total } = metrics;
+        const { viewport, height, total } = metrics;
         const action = pendingPageActionRef.current;
         let targetPage = pageForPercent(sourcePercentRef.current, total);
 
@@ -112,7 +119,6 @@ export function useReaderLayout({
         }
 
         setViewportWidth(viewport);
-        setMaxPageOffset(maxOffset);
         setTotalPages(total);
         pageIndexRef.current = targetPage;
         setPageIndexState(targetPage);
@@ -128,7 +134,6 @@ export function useReaderLayout({
           height,
         };
         layoutSettledRef.current = true;
-        setLayoutSettled(true);
         isSettlingRef.current = false;
       });
     },
@@ -150,8 +155,21 @@ export function useReaderLayout({
 
   useLayoutEffect(() => {
     if (loading || !chapterContent) return;
+
+    const container = containerRef.current;
+    const last = lastSettledRef.current;
+    const layoutAlreadySettled =
+      pendingPageAction === null &&
+      layoutSettledRef.current &&
+      container !== null &&
+      last.key === layoutKeyFor(settings, chapterIndex, chapterContent) &&
+      last.viewport === container.clientWidth &&
+      last.height === container.clientHeight;
+    if (layoutAlreadySettled) return;
+
     settleLayout("content");
-  }, [chapterContent, chapterIndex, loading, pendingPageAction, settings, settleLayout]);
+    return cancelSettleFrame;
+  }, [cancelSettleFrame, chapterContent, chapterIndex, containerRef, loading, pendingPageAction, settings, settleLayout]);
 
   useEffect(() => {
     if (loading || !chapterContent || !containerRef.current) return;
@@ -240,10 +258,7 @@ export function useReaderLayout({
     pageIndex,
     totalPages,
     viewportWidth,
-    maxPageOffset,
-    layoutSettled,
     suppressAnimation,
     setPageIndex,
-    settleLayout,
   };
 }

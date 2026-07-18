@@ -29,6 +29,7 @@ export default function ReaderFooter({
   return (
     <div
       id="reader-footer"
+      inert={!hudVisible}
       className={`absolute bottom-0 left-0 right-0 h-12 border-t flex items-center justify-between px-6 z-40 backdrop-blur-sm transition-all duration-300 ${
         hudVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3 pointer-events-none"
       } ${footerClassName}`}

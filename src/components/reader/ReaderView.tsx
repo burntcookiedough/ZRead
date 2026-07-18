@@ -25,6 +25,19 @@ const NARROW_VIEWPORT_BREAKPOINT = 768;
 const NARROW_VIEWPORT_MARGIN = 32;
 const DESKTOP_VIEWPORT_MARGIN = 96;
 
+const escapeHtml = (value: string) =>
+  value.replace(
+    /[&<>"']/g,
+    (character) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[character] || character
+  );
+
 const getWindowDimensions = () => ({
   width: typeof window !== "undefined" ? window.innerWidth : 0,
   height: typeof window !== "undefined" ? window.innerHeight : 0,
@@ -164,26 +177,45 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   const containerRef = useRef<HTMLDivElement>(null);
   const currentBookMetaRef = useRef(currentBookMeta);
+  const progressSaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const renderedChapterAssetUrlsRef = useRef<Set<string>>(new Set());
+  const chapterAssetUrlsToRevokeRef = useRef<Set<string>>(new Set());
+  const chapterTransitionRef = useRef(false);
 
   useEffect(() => {
     currentBookMetaRef.current = currentBookMeta;
   }, [currentBookMeta]);
 
+  const replaceRenderedChapterAssetUrls = useCallback((nextUrls: Set<string>) => {
+    renderedChapterAssetUrlsRef.current.forEach((url) => chapterAssetUrlsToRevokeRef.current.add(url));
+    renderedChapterAssetUrlsRef.current = nextUrls;
+  }, []);
+
+  useEffect(() => {
+    chapterAssetUrlsToRevokeRef.current.forEach((url) => URL.revokeObjectURL(url));
+    chapterAssetUrlsToRevokeRef.current.clear();
+  }, [chapterContent, loadedChapterIndex]);
+
+  useEffect(() => {
+    return () => {
+      renderedChapterAssetUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+      chapterAssetUrlsToRevokeRef.current.forEach((url) => URL.revokeObjectURL(url));
+      renderedChapterAssetUrlsRef.current.clear();
+      chapterAssetUrlsToRevokeRef.current.clear();
+    };
+  }, []);
+
   /**
    * Clears any deferred progress write before an immediate chapter/layout save.
    */
   const clearPendingProgressSave = useCallback(() => {
-    const timeoutId = (window as any)._dbSaveTimeout;
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-      (window as any)._dbSaveTimeout = null;
+    if (progressSaveTimeoutRef.current !== null) {
+      clearTimeout(progressSaveTimeoutRef.current);
+      progressSaveTimeoutRef.current = null;
     }
   }, []);
 
   const flushPendingProgressSave = useCallback(async () => {
-    const timeoutId = (window as any)._dbSaveTimeout;
-    if (!timeoutId) return;
-
     clearPendingProgressSave();
     const meta = currentBookMetaRef.current;
     if (!meta) return;
@@ -228,8 +260,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       }
 
       clearPendingProgressSave();
-      (window as any)._dbSaveTimeout = setTimeout(() => {
-        (window as any)._dbSaveTimeout = null;
+      progressSaveTimeoutRef.current = setTimeout(() => {
+        progressSaveTimeoutRef.current = null;
         storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
       }, 800);
     },
@@ -399,6 +431,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   useEffect(() => {
     if (!parsedBook || chapters.length === 0) return;
     let cancelled = false;
+    let adoptedAssetUrls = false;
+    const chapterAssetUrls = new Set<string>();
     const targetChapterIndex = currentChapterIdx;
 
     const loadChapter = async () => {
@@ -407,8 +441,16 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         const activeChapter = chapters[targetChapterIndex];
         
         // Load, rewrite images, scrape styles
-        const html = await loadChapterContent(parsedBook.zipInstance, activeChapter.zipPath);
+        const html = await loadChapterContent(parsedBook.zipInstance, activeChapter.zipPath, (url) => {
+          if (cancelled) {
+            URL.revokeObjectURL(url);
+          } else {
+            chapterAssetUrls.add(url);
+          }
+        });
         if (cancelled) return;
+        replaceRenderedChapterAssetUrls(chapterAssetUrls);
+        adoptedAssetUrls = true;
         setChapterContent(html);
         setLoadedChapterIndex(targetChapterIndex);
         setHasOpenedChapter(true);
@@ -419,31 +461,43 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       } catch (e) {
         if (cancelled) return;
         console.error("Failed to load chapter content:", e);
+        replaceRenderedChapterAssetUrls(new Set());
+        adoptedAssetUrls = true;
         setChapterContent("<p class='error'>Failed loading chapter text. The page might be corrupted or missing.</p>");
         setLoadedChapterIndex(targetChapterIndex);
         setHasOpenedChapter(true);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          chapterTransitionRef.current = false;
+          setLoading(false);
+        }
       }
     };
 
     void loadChapter();
     return () => {
       cancelled = true;
+      if (!adoptedAssetUrls) {
+        chapterAssetUrls.forEach((url) => URL.revokeObjectURL(url));
+        chapterAssetUrls.clear();
+      }
     };
-  }, [currentChapterIdx, parsedBook, chapters]);
+  }, [currentChapterIdx, parsedBook, chapters, replaceRenderedChapterAssetUrls]);
 
   // Centralized page turning handlers
   /**
    * Advances within the chapter or moves to the first page of the next chapter.
    */
   const handleNextPage = () => {
+    if (loading || chapterTransitionRef.current || loadedChapterIndex !== currentChapterIdx) return;
+
     if (chapterPageIndex < totalChapterPages - 1) {
       const nextP = chapterPageIndex + 1;
       setPageIndex(nextP, true);
       persistReadingProgress(nextP, totalChapterPages, "debounced");
     } else {
       if (currentChapterIdx < chapters.length - 1) {
+        chapterTransitionRef.current = true;
         clearPendingProgressSave();
         setPendingPageAction("first");
         setCurrentChapterIdx((prev) => prev + 1);
@@ -457,12 +511,15 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
    * Moves backward within the chapter or to the last page of the previous chapter.
    */
   const handlePrevPage = () => {
+    if (loading || chapterTransitionRef.current || loadedChapterIndex !== currentChapterIdx) return;
+
     if (chapterPageIndex > 0) {
       const prevP = chapterPageIndex - 1;
       setPageIndex(prevP, true);
       persistReadingProgress(prevP, totalChapterPages, "debounced");
     } else {
       if (currentChapterIdx > 0) {
+        chapterTransitionRef.current = true;
         clearPendingProgressSave();
         setPendingPageAction("last");
         setCurrentChapterIdx((prev) => prev - 1);
@@ -551,10 +608,10 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       const coverHtml = `
         <div class="mb-10 pb-6 border-b border-black/10 dark:border-white/10 text-center select-none animate-in fade-in duration-300" style="break-inside: avoid-column; break-after: auto;" id="book-front-cover">
           <h1 class="font-serif font-bold text-3xl md:text-4xl my-2 text-center leading-tight border-none pb-0">
-            ${parsedBook.title}
+            ${escapeHtml(parsedBook.title)}
           </h1>
           <p class="font-sans text-[10px] uppercase tracking-widest text-black/50 dark:text-white/50 font-bold mb-8">
-            by ${parsedBook.author}
+            by ${escapeHtml(parsedBook.author)}
           </p>
         </div>
       `;
@@ -753,7 +810,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       } else if (e.key === "t" || e.key === "T") {
         // Toggle settings
         e.preventDefault();
-        setShowTypography((prev) => !prev);
+        if (showTypography) closeTypography();
+        else setShowTypography(true);
       }
     };
 
@@ -993,6 +1051,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           }}
           onShowChapterPanel={() => setShowChapterBarPanel(true)}
           onSelectChapter={(idx) => {
+            if (loading || chapterTransitionRef.current) return;
+            if (idx !== currentChapterIdx) chapterTransitionRef.current = true;
             clearPendingProgressSave();
             setShowChapterLines(false);
             setShowChapterBarPanel(false);
