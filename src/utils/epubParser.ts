@@ -4,6 +4,7 @@
  */
 
 import JSZip from "jszip";
+import DOMPurify from "dompurify";
 
 export interface ParsedChapter {
   index: number;
@@ -40,6 +41,73 @@ function resolveZipPath(basePath: string, relativePath: string): string {
     }
   }
   return parts.join("/");
+}
+
+function imageMimeType(path: string): string {
+  const extension = path.split(".").pop()?.toLowerCase();
+  switch (extension) {
+    case "svg":
+      return "image/svg+xml";
+    case "png":
+      return "image/png";
+    case "jpg":
+    case "jpeg":
+      return "image/jpeg";
+    case "gif":
+      return "image/gif";
+    case "webp":
+      return "image/webp";
+    case "avif":
+      return "image/avif";
+    default:
+      return "application/octet-stream";
+  }
+}
+
+function isSafeChapterUrl(element: Element, attributeName: string, value: string): boolean {
+  const tagName = element.tagName.toLowerCase();
+  const normalized = value.trim();
+  const compact = normalized.replace(/[\u0000-\u0020]+/g, "").toLowerCase();
+  if (!normalized || compact.startsWith("javascript:") || compact.startsWith("vbscript:") || compact.startsWith("file:")) {
+    return false;
+  }
+
+  if (tagName === "a" && attributeName === "href") {
+    return /^(https?:|mailto:)/i.test(normalized);
+  }
+  if (tagName === "use") {
+    return normalized.startsWith("#");
+  }
+  if (tagName === "img" || tagName === "image") {
+    return normalized.startsWith("blob:") || /^data:image\/(?:avif|gif|jpeg|png|webp);base64,/i.test(normalized);
+  }
+  return normalized.startsWith("#");
+}
+
+/**
+ * Removes executable markup while retaining common EPUB prose, MathML, and static SVG artwork.
+ */
+function sanitizeChapterBody(body: HTMLElement): void {
+  body.innerHTML = DOMPurify.sanitize(body.innerHTML, {
+    USE_PROFILES: { html: true, svg: true, svgFilters: false, mathMl: true },
+    ALLOW_DATA_ATTR: false,
+    FORBID_TAGS: [
+      "audio", "button", "canvas", "embed", "fieldset", "form", "foreignObject", "iframe", "input", "object", "select",
+      "source", "template", "textarea", "track", "video",
+    ],
+    FORBID_ATTR: ["action", "autofocus", "formaction", "srcdoc", "srcset"],
+  });
+}
+
+function removeUnsafeChapterUrls(body: HTMLElement): void {
+  for (const element of Array.from(body.querySelectorAll("[href], [src], [xlink\\:href]"))) {
+    for (const attributeName of ["href", "src", "xlink:href"]) {
+      const value = element.getAttribute(attributeName);
+      if (value !== null && !isSafeChapterUrl(element, attributeName, value)) {
+        element.removeAttribute(attributeName);
+      }
+    }
+  }
 }
 
 /**
@@ -173,9 +241,14 @@ export async function loadChapterContent(
   // Use HTML parser to parse XHTML
   const parser = new DOMParser();
   const doc = parser.parseFromString(rawText, "text/html");
+  const body = doc.querySelector("body");
+  if (!body) {
+    return "<p class='error'>Chapter content is missing.</p>";
+  }
+  sanitizeChapterBody(body);
 
   // Iterate and rewrite <img> and SVG <image> tags so we load localized file asset URLs
-  const imgElements = doc.querySelectorAll("img, image");
+  const imgElements = body.querySelectorAll("img, image");
   for (const img of Array.from(imgElements)) {
     const src = img.getAttribute("src") || img.getAttribute("href") || img.getAttribute("xlink:href");
     if (src) {
@@ -187,7 +260,8 @@ export async function loadChapterContent(
 
       if (imgFile) {
         try {
-          const blob = await imgFile.async("blob");
+          const imageBytes = await imgFile.async("uint8array");
+          const blob = new Blob([imageBytes], { type: imageMimeType(imgZipPath) });
           const localUrl = URL.createObjectURL(blob);
           if (img.tagName.toLowerCase() === "img") {
             img.setAttribute("src", localUrl);
@@ -197,7 +271,10 @@ export async function loadChapterContent(
           }
           
           // Add custom elegant sizing and styles to inline content assets
-          img.className = "max-w-full h-auto mx-auto my-6 rounded shadow-sm opacity-90 transition-opacity hover:opacity-100";
+          img.setAttribute(
+            "class",
+            "max-w-full h-auto mx-auto my-6 rounded shadow-sm opacity-90 transition-opacity hover:opacity-100"
+          );
           img.setAttribute("referrerpolicy", "no-referrer");
           
           if (onImageResolved) {
@@ -211,7 +288,7 @@ export async function loadChapterContent(
   }
 
   // Prevent SVG elements (especially cover pages) from stretching
-  const svgElements = doc.querySelectorAll("svg");
+  const svgElements = body.querySelectorAll("svg");
   svgElements.forEach((svg) => {
     svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
     
@@ -239,7 +316,7 @@ export async function loadChapterContent(
   });
 
   // Clean links, make internal anchors open in a custom way or disable
-  const links = doc.querySelectorAll("a");
+  const links = body.querySelectorAll("a");
   links.forEach((a) => {
     // If it's an external link, make it target _blank safely
     const href = a.getAttribute("href");
@@ -252,12 +329,6 @@ export async function loadChapterContent(
       a.className = "text-inherit cursor-default no-underline";
     }
   });
-
-  // Extract the main readable container block
-  const body = doc.querySelector("body");
-  if (!body) {
-    return rawText;
-  }
 
   // Remove any raw style tags so they don't break our theme styling
   const styleTags = body.querySelectorAll("style, link[rel='stylesheet']");
@@ -272,6 +343,8 @@ export async function loadChapterContent(
       (el as HTMLElement).style.textAlign = align;
     }
   });
+
+  removeUnsafeChapterUrls(body);
 
   return body.innerHTML;
 }
