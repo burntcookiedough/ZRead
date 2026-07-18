@@ -45,30 +45,30 @@ export default function ReaderFooter({
           onClick={onPreviousPage}
           id="btn-footer-prev"
           disabled={currentChapterIndex === 0 && currentPageIndex === 0}
-          className="text-[10px] uppercase tracking-[0.2em] font-sans font-bold text-black/50 hover:text-black dark:text-white/50 dark:hover:text-white disabled:opacity-20 transition-colors cursor-pointer"
+          className="text-[10px] uppercase tracking-[0.16em] font-sans font-bold text-black/65 hover:text-black dark:text-white/65 dark:hover:text-white disabled:opacity-25 transition-colors cursor-pointer"
         >
           Prev
         </button>
-        <span className="hidden sm:inline text-[9px] uppercase tracking-[0.15em] font-sans font-semibold text-neutral-400/80 dark:text-neutral-500/80 select-none">
+        <span className="hidden sm:inline text-[9px] uppercase tracking-[0.12em] font-sans font-semibold text-neutral-500 dark:text-neutral-400 select-none">
           • Chapter {currentChapterIndex + 1}
         </span>
       </div>
 
       <div className="flex flex-col items-center justify-center">
-        <span className="font-sans text-[13px] md:text-[14px] font-normal text-neutral-400 dark:text-neutral-500 tracking-wide select-none">
+        <span className="font-sans text-[13px] md:text-[14px] font-normal text-neutral-500 dark:text-neutral-400 tracking-wide select-none tabular-nums">
           {currentPageIndex + 1} of {totalPages}
         </span>
       </div>
 
       <div className="flex items-center gap-3">
-        <span className="hidden sm:inline text-[9px] uppercase tracking-[0.15em] font-sans font-semibold text-neutral-400/80 dark:text-neutral-500/80 select-none">
+        <span className="hidden sm:inline text-[9px] uppercase tracking-[0.12em] font-sans font-semibold text-neutral-500 dark:text-neutral-400 select-none">
           {Math.round(progressPercent)}% Read •
         </span>
         <button
           onClick={onNextPage}
           id="btn-footer-next"
           disabled={currentChapterIndex === totalChapters - 1 && currentPageIndex === totalPages - 1}
-          className="text-[10px] uppercase tracking-[0.2em] font-sans font-bold text-black/50 hover:text-black dark:text-white/50 dark:hover:text-white disabled:opacity-20 transition-colors cursor-pointer"
+          className="text-[10px] uppercase tracking-[0.16em] font-sans font-bold text-black/65 hover:text-black dark:text-white/65 dark:hover:text-white disabled:opacity-25 transition-colors cursor-pointer"
         >
           Next
         </button>

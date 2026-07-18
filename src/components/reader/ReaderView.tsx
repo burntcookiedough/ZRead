@@ -12,6 +12,7 @@ import SelectionMenu from "./SelectionMenu";
 import AIResponsePopover from "./AIResponsePopover";
 import { triggerAIAction } from "../../utils/aiClient";
 import { ChapterRail, ReaderFooter, ReaderSettingsPanel, ReaderShell } from "./index";
+import { PendingPageAction, useReaderLayout } from "./hooks/useReaderLayout";
 
 interface ReaderViewProps {
   bookId: string;
@@ -19,6 +20,15 @@ interface ReaderViewProps {
 }
 
 const COLUMN_GAP = 48;
+const MIN_SPLIT_COLUMN_WIDTH = 420;
+const NARROW_VIEWPORT_BREAKPOINT = 768;
+const NARROW_VIEWPORT_MARGIN = 32;
+const DESKTOP_VIEWPORT_MARGIN = 96;
+
+const getWindowDimensions = () => ({
+  width: typeof window !== "undefined" ? window.innerWidth : 0,
+  height: typeof window !== "undefined" ? window.innerHeight : 0,
+});
 
 /**
  * Renders an EPUB reading surface with paginated navigation, reader settings, annotations, and AI actions.
@@ -30,16 +40,13 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const [chapters, setChapters] = useState<ParsedChapter[]>([]);
   const [currentChapterIdx, setCurrentChapterIdx] = useState(0);
   const [chapterContent, setChapterContent] = useState<string>("");
+  const [loadedChapterIndex, setLoadedChapterIndex] = useState<number | null>(null);
+  const [hasOpenedChapter, setHasOpenedChapter] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   // Page Navigation States
-  const [chapterPageIndex, setChapterPageIndex] = useState(0);
-  const [totalChapterPages, setTotalChapterPages] = useState(1);
-  const [viewportWidth, setViewportWidth] = useState(0);
-  const [pendingPageAction, setPendingPageAction] = useState<"first" | "last" | "restore" | null>("restore");
-  const [suppressAnimation, setSuppressAnimation] = useState(true);
-  const [layoutSettled, setLayoutSettled] = useState(false);
+  const [pendingPageAction, setPendingPageAction] = useState<PendingPageAction>("restore");
   const [showChapterBarPanel, setShowChapterBarPanel] = useState(false);
   const [showChapterLines, setShowChapterLines] = useState(false);
 
@@ -53,6 +60,23 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   // Reader Settings
   const [settings, setSettings] = useState<ReaderSettings>(storage.getReaderSettings());
+  const [windowDimensions, setWindowDimensions] = useState(getWindowDimensions);
+
+  const closeTypography = useCallback(() => {
+    setShowTypography(false);
+    requestAnimationFrame(() => document.getElementById("btn-reader-typo")?.focus());
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => setWindowDimensions(getWindowDimensions());
+    window.addEventListener("resize", handleResize);
+    document.addEventListener("fullscreenchange", handleResize);
+    handleResize();
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      document.removeEventListener("fullscreenchange", handleResize);
+    };
+  }, []);
 
   // Sync document root dark class list with theme setting
   useEffect(() => {
@@ -91,7 +115,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
    */
   const isInteractiveTarget = (target: HTMLElement) => {
     return !!target.closest(
-      "button, input, textarea, select, a, " +
+        "button, input, textarea, select, a, " +
+        "[data-highlight-id], " +
         "#reader-hud-header, #reader-footer, #typo-panel-sec, " +
         "#selection-floating-menu, #ai-response-popover, #chapter-edge-nav, #toast-notification"
     );
@@ -138,41 +163,104 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const [toastTimeoutId, setToastTimeoutId] = useState<any>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const chapterPageIndexRef = useRef(chapterPageIndex);
   const currentBookMetaRef = useRef(currentBookMeta);
-  useEffect(() => {
-    chapterPageIndexRef.current = chapterPageIndex;
-  }, [chapterPageIndex]);
 
   useEffect(() => {
     currentBookMetaRef.current = currentBookMeta;
   }, [currentBookMeta]);
 
   /**
-   * Measures the rendered chapter width and converts it into page-count metadata.
+   * Clears any deferred progress write before an immediate chapter/layout save.
    */
-  const getPaginationMetrics = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return null;
-
-    const viewport = container.clientWidth;
-    if (viewport <= 0) return null;
-
-    const content = container.querySelector<HTMLElement>("#reader-chapter-body");
-    const scrollWidth = content?.scrollWidth || container.scrollWidth;
-    const stride = viewport + COLUMN_GAP;
-    const total = Math.max(1, Math.ceil((scrollWidth + COLUMN_GAP) / stride));
-
-    return { viewport, total };
+  const clearPendingProgressSave = useCallback(() => {
+    const timeoutId = (window as any)._dbSaveTimeout;
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+      (window as any)._dbSaveTimeout = null;
+    }
   }, []);
+
+  const flushPendingProgressSave = useCallback(async () => {
+    const timeoutId = (window as any)._dbSaveTimeout;
+    if (!timeoutId) return;
+
+    clearPendingProgressSave();
+    const meta = currentBookMetaRef.current;
+    if (!meta) return;
+    try {
+      await storage.saveBookMetadata(meta);
+    } catch (e) {
+      console.error("Final progress save failed", e);
+    }
+  }, [clearPendingProgressSave]);
+
+  useEffect(() => {
+    return () => {
+      void flushPendingProgressSave();
+    };
+  }, [flushPendingProgressSave]);
 
   /**
-   * Converts persisted chapter progress into a valid page index for the current layout.
+   * Persists reading progress with one debounced path and one immediate path.
    */
-  const pageForSavedPercent = useCallback((total: number) => {
-    const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
-    return Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
-  }, []);
+  const persistReadingProgress = useCallback(
+    (pageIdx: number, totalPages: number, mode: "debounced" | "immediate") => {
+      const meta = currentBookMetaRef.current;
+      if (!meta) return;
+
+      const percent = totalPages > 1 ? (pageIdx / (totalPages - 1)) * 100 : 0;
+      const updatedMeta: Book = {
+        ...meta,
+        lastOpenedAt: new Date().toISOString(),
+        progress: {
+          chapterIndex: currentChapterIdx,
+          scrollPercent: Number(percent.toFixed(2)),
+        },
+      };
+
+      setCurrentBookMeta(updatedMeta);
+      currentBookMetaRef.current = updatedMeta;
+
+      if (mode === "immediate") {
+        clearPendingProgressSave();
+        storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
+        return;
+      }
+
+      clearPendingProgressSave();
+      (window as any)._dbSaveTimeout = setTimeout(() => {
+        (window as any)._dbSaveTimeout = null;
+        storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
+      }, 800);
+    },
+    [clearPendingProgressSave, currentChapterIdx]
+  );
+
+  const layoutChapterContent = loadedChapterIndex === currentChapterIdx ? chapterContent : "";
+
+  const {
+    pageIndex: chapterPageIndex,
+    totalPages: totalChapterPages,
+    viewportWidth,
+    suppressAnimation,
+    setPageIndex,
+  } = useReaderLayout({
+    containerRef,
+    chapterContent: layoutChapterContent,
+    loading: loading || currentBookMeta === null,
+    settings,
+    chapterIndex: currentChapterIdx,
+    pendingPageAction,
+    sourcePercent: currentBookMeta?.progress?.scrollPercent || 0,
+    columnGap: COLUMN_GAP,
+    onPendingPageActionSettled: useCallback(() => setPendingPageAction(null), []),
+    onSettledProgress: useCallback(
+      (pageIdx: number, totalPages: number) => {
+        persistReadingProgress(pageIdx, totalPages, "immediate");
+      },
+      [persistReadingProgress]
+    ),
+  });
 
   const activeChapterRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -244,6 +332,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
         // 2. Parse EPUB Structure
         const parsed = await parseEpub(fileBytes);
+        if (parsed.chapters.length === 0) {
+          throw new Error("This EPUB does not contain any readable spine chapters.");
+        }
         setParsedBook(parsed);
         setChapters(parsed.chapters);
 
@@ -307,56 +398,40 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   // Load active chapter content when chapter index changes
   useEffect(() => {
     if (!parsedBook || chapters.length === 0) return;
+    let cancelled = false;
+    const targetChapterIndex = currentChapterIdx;
 
     const loadChapter = async () => {
       try {
         setLoading(true);
-        setLayoutSettled(false);
-        setSuppressAnimation(true);
-        const activeChapter = chapters[currentChapterIdx];
+        const activeChapter = chapters[targetChapterIndex];
         
         // Load, rewrite images, scrape styles
         const html = await loadChapterContent(parsedBook.zipInstance, activeChapter.zipPath);
+        if (cancelled) return;
         setChapterContent(html);
+        setLoadedChapterIndex(targetChapterIndex);
+        setHasOpenedChapter(true);
 
         if (containerRef.current) {
           containerRef.current.scrollLeft = 0;
         }
       } catch (e) {
+        if (cancelled) return;
         console.error("Failed to load chapter content:", e);
         setChapterContent("<p class='error'>Failed loading chapter text. The page might be corrupted or missing.</p>");
+        setLoadedChapterIndex(targetChapterIndex);
+        setHasOpenedChapter(true);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
 
-    loadChapter();
-  }, [currentChapterIdx, parsedBook, chapters]);
-
-  // Helper to save reading progress as percentage based on current page
-  /**
-   * Persists the reader's current chapter and page as percentage-based progress.
-   */
-  const saveReadingProgress = (pageIdx: number, totalPages: number) => {
-    if (!currentBookMeta) return;
-    const percent = totalPages > 1 ? (pageIdx / (totalPages - 1)) * 100 : 0;
-    
-    const updatedMeta: Book = {
-      ...currentBookMeta,
-      lastOpenedAt: new Date().toISOString(),
-      progress: {
-        chapterIndex: currentChapterIdx,
-        scrollPercent: Number(percent.toFixed(2)),
-      },
+    void loadChapter();
+    return () => {
+      cancelled = true;
     };
-    setCurrentBookMeta(updatedMeta);
-    
-    const timeoutId = (window as any)._dbSaveTimeout;
-    if (timeoutId) clearTimeout(timeoutId);
-    (window as any)._dbSaveTimeout = setTimeout(() => {
-      storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
-    }, 800);
-  };
+  }, [currentChapterIdx, parsedBook, chapters]);
 
   // Centralized page turning handlers
   /**
@@ -365,12 +440,11 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const handleNextPage = () => {
     if (chapterPageIndex < totalChapterPages - 1) {
       const nextP = chapterPageIndex + 1;
-      setSuppressAnimation(false);
-      setChapterPageIndex(nextP);
-      saveReadingProgress(nextP, totalChapterPages);
+      setPageIndex(nextP, true);
+      persistReadingProgress(nextP, totalChapterPages, "debounced");
     } else {
       if (currentChapterIdx < chapters.length - 1) {
-        setSuppressAnimation(true);
+        clearPendingProgressSave();
         setPendingPageAction("first");
         setCurrentChapterIdx((prev) => prev + 1);
       } else {
@@ -385,12 +459,11 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const handlePrevPage = () => {
     if (chapterPageIndex > 0) {
       const prevP = chapterPageIndex - 1;
-      setSuppressAnimation(false);
-      setChapterPageIndex(prevP);
-      saveReadingProgress(prevP, totalChapterPages);
+      setPageIndex(prevP, true);
+      persistReadingProgress(prevP, totalChapterPages, "debounced");
     } else {
       if (currentChapterIdx > 0) {
-        setSuppressAnimation(true);
+        clearPendingProgressSave();
         setPendingPageAction("last");
         setCurrentChapterIdx((prev) => prev - 1);
       } else {
@@ -399,86 +472,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }
   };
 
-  // Recalculates horizontal scroll offset on window resize
-  /**
-   * Recomputes pagination after viewport changes while preserving the current page when possible.
-   */
-  const recalculatePages = useCallback(() => {
-    setSuppressAnimation(true);
-    const metrics = getPaginationMetrics();
-    if (!metrics) return;
-    const { viewport, total } = metrics;
-    setViewportWidth(viewport);
-    setTotalChapterPages(total);
-    const targetPage = Math.min(total - 1, chapterPageIndexRef.current);
-    setChapterPageIndex(targetPage);
-
-    setTimeout(() => {
-      setSuppressAnimation(false);
-    }, 50);
-  }, [getPaginationMetrics]);
-
-  // Window resize handler
-  useEffect(() => {
-    const handleResize = () => {
-      setSuppressAnimation(true);
-      recalculatePages();
-    };
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [recalculatePages]);
-
-  // Recalculate pages and scroll position when chapter finishes loading or settings change
-  useEffect(() => {
-    if (loading || !chapterContent || !containerRef.current) return;
-
-    const timer = setTimeout(() => {
-      const metrics = getPaginationMetrics();
-      if (!metrics) return;
-      const { viewport, total } = metrics;
-
-      setViewportWidth(viewport);
-      setTotalChapterPages(total);
-
-      let targetPage = chapterPageIndexRef.current;
-      if (pendingPageAction === "last") {
-        targetPage = total - 1;
-      } else if (pendingPageAction === "first") {
-        targetPage = 0;
-      } else if (pendingPageAction === "restore") {
-        targetPage = pageForSavedPercent(total);
-      } else {
-        targetPage = Math.min(total - 1, Math.max(0, chapterPageIndexRef.current));
-      }
-
-      setChapterPageIndex(targetPage);
-      setPendingPageAction(null);
-      
-      // Save progress immediately
-      const percent = total > 1 ? (targetPage / (total - 1)) * 100 : 0;
-      const meta = currentBookMetaRef.current;
-      if (meta) {
-        const updatedMeta: Book = {
-          ...meta,
-          lastOpenedAt: new Date().toISOString(),
-          progress: {
-            chapterIndex: currentChapterIdx,
-            scrollPercent: Number(percent.toFixed(2)),
-          },
-        };
-        setCurrentBookMeta(updatedMeta);
-        storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
-      }
-
-      setLayoutSettled(true);
-      setTimeout(() => {
-        setSuppressAnimation(false);
-      }, 50);
-    }, 150);
-
-    return () => clearTimeout(timer);
-  }, [loading, chapterContent, pendingPageAction, settings, currentChapterIdx, getPaginationMetrics, pageForSavedPercent]);
-
   // Highlights injector implementation
   /**
    * Produces the chapter HTML with reader-managed highlights and the optional front-cover header.
@@ -486,9 +479,10 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const getRenderHtml = () => {
     let content = chapterContent;
     if (!content) return "";
+    const renderedChapterIndex = loadedChapterIndex ?? currentChapterIdx;
     
     // Highlights applicable only for this chapter path
-    const chapterHighlights = highlights.filter((h) => h.chapterIndex === currentChapterIdx);
+    const chapterHighlights = highlights.filter((h) => h.chapterIndex === renderedChapterIndex);
     
     if (chapterHighlights.length > 0) {
       const parser = new DOMParser();
@@ -553,7 +547,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }
 
     // Prepend custom front cover header inside the columns for chapter 0
-    if (currentChapterIdx === 0 && parsedBook) {
+    if (renderedChapterIndex === 0 && parsedBook) {
       const coverHtml = `
         <div class="mb-10 pb-6 border-b border-black/10 dark:border-white/10 text-center select-none animate-in fade-in duration-300" style="break-inside: avoid-column; break-after: auto;" id="book-front-cover">
           <h1 class="font-serif font-bold text-3xl md:text-4xl my-2 text-center leading-tight border-none pb-0">
@@ -633,7 +627,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       const newHl: Highlight = {
         id: `hl_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         bookId,
-        chapterIndex: currentChapterIdx,
+        chapterIndex: loadedChapterIndex ?? currentChapterIdx,
         text,
         color: colorClass,
         createdAt: new Date().toISOString(),
@@ -735,7 +729,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     const handleKeyDown = (e: KeyboardEvent) => {
       // Escape closes current overlays
       if (e.key === "Escape") {
-        if (showTypography) setShowTypography(false);
+        if (showTypography) closeTypography();
         else if (aiState.visible) setAiState((prev) => ({ ...prev, visible: false }));
         return;
       }
@@ -765,7 +759,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showTypography, aiState.visible, currentChapterIdx, chapters, chapterPageIndex, totalChapterPages]);
+  }, [showTypography, aiState.visible, currentChapterIdx, chapters, chapterPageIndex, totalChapterPages, closeTypography]);
 
   // Chapter Summarization callback (from HUD sparking action)
   /**
@@ -780,7 +774,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     setAiState({
       visible: true,
       type: "summarize",
-      inputText: `Chapter ${currentChapterIdx + 1}: ${chapters[currentChapterIdx]?.title || 'Section'}`,
+      inputText: `Chapter ${(loadedChapterIndex ?? currentChapterIdx) + 1}: ${chapters[loadedChapterIndex ?? currentChapterIdx]?.title || 'Section'}`,
       result: null,
       loading: true,
       error: null,
@@ -804,9 +798,13 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
    * Persists typography and layout settings while prompting pagination to settle again.
    */
   const handleSettingsChange = (newSettings: ReaderSettings) => {
-    setSuppressAnimation(true);
     setSettings(newSettings);
     storage.saveReaderSettings(newSettings);
+  };
+
+  const handleBackToLibrary = async () => {
+    await flushPendingProgressSave();
+    onBackToLibrary();
   };
 
   // Theme map helper definitions
@@ -835,7 +833,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }
   };
 
-  if (loading && !chapterContent) {
+  if ((!hasOpenedChapter || currentBookMeta === null) && !error) {
     return (
       <div className="w-full h-screen flex flex-col items-center justify-center bg-white dark:bg-black text-black dark:text-white" id="read-loader">
         <p className="text-[10px] font-sans uppercase tracking-widest font-bold animate-pulse">Opening reader workspace...</p>
@@ -849,7 +847,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         <h3 className="font-serif italic text-xl mb-2">Could not initialize book</h3>
         <p className="text-xs text-black/60 dark:text-white/60 max-w-sm mb-6 leading-relaxed">{error}</p>
         <button
-          onClick={onBackToLibrary}
+          onClick={handleBackToLibrary}
           id="btn-back-err"
           className="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-sm border border-black dark:border-white font-sans text-[10px] uppercase tracking-widest font-bold hover:bg-white hover:text-black dark:hover:bg-black dark:hover:text-white transition-all cursor-pointer"
         >
@@ -860,15 +858,22 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   }
 
   const themeStyle = getThemeClass(settings.theme);
-  const activeChapter = chapters[currentChapterIdx];
-  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
-  const visiblePageCount = settings.viewMode === "split" && !isMobile ? 2 : 1;
+  const displayedChapterIndex = loadedChapterIndex ?? currentChapterIdx;
+  const activeChapter = chapters[displayedChapterIndex];
+  const isNarrowViewport = windowDimensions.width < NARROW_VIEWPORT_BREAKPOINT;
+  const viewportMargin = isNarrowViewport ? NARROW_VIEWPORT_MARGIN : DESKTOP_VIEWPORT_MARGIN;
+  const availableReaderWidth = Math.max(0, windowDimensions.width - viewportMargin);
+  const splitRequiredWidth = MIN_SPLIT_COLUMN_WIDTH * 2 + COLUMN_GAP;
+  const effectiveViewMode =
+    settings.viewMode === "split" && availableReaderWidth >= splitRequiredWidth ? "split" : "single";
+  const visiblePageCount = effectiveViewMode === "split" ? 2 : 1;
   const viewportMaxWidth = settings.contentWidth * visiblePageCount + (visiblePageCount - 1) * COLUMN_GAP;
-  const viewportWidthStr = isMobile
+  const viewportWidthStr = isNarrowViewport
     ? `min(calc(100vw - 32px), ${settings.contentWidth}px)`
     : `min(calc(100vw - 96px), ${viewportMaxWidth}px)`;
   const viewportTopClass = isFullscreen ? "top-6" : "top-16";
   const viewportBottomClass = isFullscreen ? "bottom-6" : "bottom-12";
+  const pageOffset = chapterPageIndex * (viewportWidth + COLUMN_GAP);
 
   return (
     <ReaderShell
@@ -879,15 +884,15 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       showSettings={showTypography}
       onMouseMove={handleMouseMove}
       onClick={handleGlobalClick}
-      onBackToLibrary={onBackToLibrary}
+      onBackToLibrary={handleBackToLibrary}
       onSummarizeChapter={handleSummarizeChapter}
-      onToggleSettings={() => setShowTypography(!showTypography)}
+      onToggleSettings={() => (showTypography ? closeTypography() : setShowTypography(true))}
     >
       <ReaderSettingsPanel
         visible={showTypography}
         settings={settings}
         onChange={handleSettingsChange}
-        onClose={() => setShowTypography(false)}
+        onClose={closeTypography}
       />
 
       {/* 3. AI Side Popover */}
@@ -918,19 +923,20 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         style={{
           width: viewportWidthStr,
         }}
-        className={`absolute left-1/2 -translate-x-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar transition-all duration-300 ${viewportTopClass} ${viewportBottomClass}`}
+        className={`absolute left-1/2 -translate-x-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar ${viewportTopClass} ${viewportBottomClass}`}
       >
         <div
           style={{
             width: "100%",
             maxWidth: "100%",
-            transform: `translate3d(-${chapterPageIndex * (viewportWidth + COLUMN_GAP)}px, 0, 0)`,
-            transition: suppressAnimation 
-              ? "opacity 0.15s ease-in-out" 
-              : "transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease-in-out",
-            opacity: (loading || !layoutSettled) ? 0 : 1,
+            transform: `translate3d(-${pageOffset}px, 0, 0)`,
+            opacity: chapterContent ? 1 : 0,
           }}
-          className="mx-auto px-0 h-full py-2 relative"
+          className={`mx-auto px-0 h-full py-2 relative ${
+            suppressAnimation
+              ? "transition-none"
+              : "transition-[transform] duration-[280ms] ease-[cubic-bezier(0.16,1,0.3,1)] motion-reduce:transition-none"
+          }`}
           id="reader-column"
         >
           {/* Core Chapter HTML body render (Premium custom typographies binding) */}
@@ -987,7 +993,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           }}
           onShowChapterPanel={() => setShowChapterBarPanel(true)}
           onSelectChapter={(idx) => {
-            setSuppressAnimation(true);
+            clearPendingProgressSave();
+            setShowChapterLines(false);
+            setShowChapterBarPanel(false);
             setPendingPageAction("first");
             setCurrentChapterIdx(idx);
           }}
@@ -997,7 +1005,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       <ReaderFooter
         hudVisible={hudVisible}
         footerClassName={themeStyle.footer}
-        currentChapterIndex={currentChapterIdx}
+        currentChapterIndex={displayedChapterIndex}
         currentPageIndex={chapterPageIndex}
         totalPages={totalChapterPages}
         totalChapters={chapters.length}

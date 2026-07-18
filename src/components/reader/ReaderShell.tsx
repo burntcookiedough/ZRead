@@ -42,19 +42,19 @@ export default function ReaderShell({
       onMouseMove={onMouseMove}
       onClick={onClick}
       id="reader-hud-root"
-      className={`relative w-full h-screen overflow-hidden select-text transition-colors duration-300 ${themeStyle.wrapper}`}
+      className={`relative w-full h-dvh overflow-hidden select-text transition-colors duration-150 ${themeStyle.wrapper}`}
     >
       <div
         id="reader-hud-header"
-        className={`absolute top-0 left-0 right-0 h-16 border-b flex items-center justify-between px-6 z-40 backdrop-blur-sm transition-all duration-300 ${
+        className={`absolute top-0 left-0 right-0 h-16 border-b flex items-center justify-between px-4 sm:px-6 z-40 backdrop-blur-sm transition-all duration-150 ${
           hudVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4 pointer-events-none"
         } ${themeStyle.header}`}
       >
-        <div className="flex items-center gap-4">
+        <div className="flex min-w-0 items-center gap-3 sm:gap-4">
           <button
             onClick={onBackToLibrary}
             id="btn-reader-back"
-            className="group flex items-center gap-1.5 text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white transition-colors cursor-pointer font-bold font-sans text-[10px] uppercase tracking-[0.2em]"
+            className="group flex items-center gap-1.5 text-black/70 dark:text-white/70 hover:text-black dark:hover:text-white transition-colors cursor-pointer font-bold font-sans text-[10px] uppercase tracking-[0.16em]"
             title="Library Catalog"
           >
             <span>← Library</span>
@@ -62,22 +62,22 @@ export default function ReaderShell({
 
           <div className="h-4 w-px bg-black/10 dark:bg-white/10"></div>
 
-          <div>
+          <div className="min-w-0">
             <h4 className="font-serif font-bold text-xs max-w-[150px] md:max-w-[320px] truncate leading-tight italic">
               {bookTitle}
             </h4>
-            <p className="font-sans text-[8px] text-black/45 dark:text-white/45 uppercase tracking-[0.2em] font-semibold mt-0.5">
+            <p className="font-sans text-[9px] text-black/55 dark:text-white/55 uppercase tracking-[0.14em] font-semibold mt-0.5 truncate max-w-[150px] md:max-w-[320px]">
               {activeChapterTitle || "Chapter Description"}
             </p>
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <button
             onClick={onSummarizeChapter}
             id="btn-reader-summarize"
-            title="Summarize chapter [Key: S]"
-            className="px-2.5 py-1.5 rounded-sm border border-black/10 dark:border-white/10 text-black/80 dark:text-white/80 text-[9px] uppercase tracking-[0.15em] font-sans font-bold hover:border-black dark:hover:border-white transition-all cursor-pointer"
+            title="Summarize chapter"
+            className="inline-flex px-2 py-1.5 sm:px-2.5 rounded-sm border border-black/15 dark:border-white/15 text-black/80 dark:text-white/80 text-[9px] uppercase tracking-[0.1em] sm:tracking-[0.12em] font-sans font-bold hover:border-black dark:hover:border-white transition-colors cursor-pointer"
           >
             <span>Summarize</span>
           </button>
@@ -86,7 +86,9 @@ export default function ReaderShell({
             onClick={onToggleSettings}
             id="btn-reader-typo"
             title="Typography settings [Key: T]"
-            className={`px-2.5 py-1.5 rounded-sm border text-[9px] uppercase tracking-[0.15em] font-sans font-bold transition-all cursor-pointer ${
+            aria-expanded={showSettings}
+            aria-controls="typo-panel-sec"
+            className={`px-2.5 py-1.5 rounded-sm border text-[9px] uppercase tracking-[0.12em] font-sans font-bold transition-colors cursor-pointer ${
               showSettings
                 ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black"
                 : "border-black/10 dark:border-white/10 text-black/60 dark:text-white/60 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white"

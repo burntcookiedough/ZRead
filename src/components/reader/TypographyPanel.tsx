@@ -29,15 +29,15 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
   };
 
   return (
-    <div className="p-6 w-full max-w-sm rounded-sm shadow-2xl border border-black/10 dark:border-white/10 backdrop-blur-md bg-white/95 dark:bg-neutral-900/95 max-h-[85vh] overflow-y-auto no-scrollbar">
-      <div className="flex items-center justify-between mb-6 border-b border-black/5 dark:border-white/5 pb-3" id="typo-hdr">
+    <div className="w-full max-w-none rounded-sm border border-black/10 bg-white/95 p-4 shadow-xl backdrop-blur-md dark:border-white/10 dark:bg-neutral-900/95 max-h-[min(82dvh,calc(100dvh-5.5rem))] overflow-y-auto no-scrollbar sm:max-w-sm sm:p-6 sm:max-h-[min(85dvh,calc(100dvh-6rem))]">
+      <div className="flex items-center justify-between mb-5 border-b border-black/10 dark:border-white/10 pb-3" id="typo-hdr">
         <div className="flex items-center gap-2">
-          <h3 className="font-sans font-bold text-[10px] uppercase tracking-[0.2em] text-black/60 dark:text-white/60">Typography Settings</h3>
+          <h3 id="typography-settings-title" className="font-sans font-bold text-[11px] uppercase tracking-[0.16em] text-black/70 dark:text-white/70">Typography Settings</h3>
         </div>
         <button
           onClick={onClose}
           id="btn-close-typo"
-          className="text-[9px] uppercase tracking-[0.15em] font-sans font-bold text-black/40 hover:text-black dark:text-white/45 dark:hover:text-white transition-colors"
+          className="text-[10px] uppercase tracking-[0.12em] font-sans font-bold text-black/55 hover:text-black dark:text-white/60 dark:hover:text-white transition-colors"
         >
           Close
         </button>
@@ -45,7 +45,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
 
       {/* Font Family selection */}
       <div className="mb-6" id="typo-family">
-        <label className="block text-[9px] font-sans font-bold text-black/40 dark:text-white/40 uppercase tracking-[0.2em] mb-3">
+        <label className="block text-[9px] font-sans font-bold text-black/55 dark:text-white/55 uppercase tracking-[0.16em] mb-3">
           Typeface
         </label>
         <div className="grid grid-cols-2 gap-2">
@@ -54,6 +54,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
               key={f.id}
               id={`font-family-${f.id}`}
               onClick={() => updateSetting("fontFamily", f.id)}
+              aria-pressed={settings.fontFamily === f.id}
               className={`px-3 py-2 text-xs text-left transition-all rounded-sm cursor-pointer border ${
                 settings.fontFamily === f.id
                   ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black font-semibold"
@@ -71,7 +72,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
       {/* Font Size controls */}
       <div className="mb-6" id="typo-size">
         <div className="flex items-center justify-between mb-3">
-          <label className="text-[9px] font-sans font-bold text-black/40 dark:text-white/40 uppercase tracking-[0.2em]">
+          <label className="text-[9px] font-sans font-bold text-black/55 dark:text-white/55 uppercase tracking-[0.16em]">
             Font Size
           </label>
           <span className="text-[10px] text-black dark:text-white font-mono tracking-wider font-semibold">{settings.fontSize}px</span>
@@ -81,6 +82,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
             onClick={() => updateSetting("fontSize", Math.max(14, settings.fontSize - 1))}
             disabled={settings.fontSize <= 14}
             id="btn-font-dec"
+            aria-label="Decrease font size"
             className="flex-1 py-1 flex justify-center items-center rounded-sm border border-black/10 dark:border-white/10 disabled:opacity-30 hover:border-black dark:hover:border-white text-black dark:text-white transition-all font-bold text-xs"
           >
             -
@@ -89,6 +91,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
             onClick={() => updateSetting("fontSize", Math.min(28, settings.fontSize + 1))}
             disabled={settings.fontSize >= 28}
             id="btn-font-inc"
+            aria-label="Increase font size"
             className="flex-1 py-1 flex justify-center items-center rounded-sm border border-black/10 dark:border-white/10 disabled:opacity-30 hover:border-black dark:hover:border-white text-black dark:text-white transition-all font-bold text-xs"
           >
             +
@@ -99,7 +102,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
       {/* Line Height controls */}
       <div className="mb-6" id="typo-lineheight">
         <div className="flex items-center justify-between mb-3">
-          <label className="text-[9px] font-sans font-bold text-black/40 dark:text-white/40 uppercase tracking-[0.2em]">
+          <label className="text-[9px] font-sans font-bold text-black/55 dark:text-white/55 uppercase tracking-[0.16em]">
             Line Spacing
           </label>
           <span className="text-[10px] text-black dark:text-white font-mono tracking-wider font-semibold">{settings.lineHeight.toFixed(1)}</span>
@@ -109,6 +112,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
             onClick={() => updateSetting("lineHeight", Math.max(1.4, Number((settings.lineHeight - 0.1).toFixed(1))))}
             disabled={settings.lineHeight <= 1.4}
             id="btn-line-dec"
+            aria-label="Decrease line spacing"
             className="flex-1 py-1 flex justify-center items-center rounded-sm border border-black/10 dark:border-white/10 disabled:opacity-30 hover:border-black dark:hover:border-white text-black dark:text-white transition-all font-bold text-xs"
           >
             -
@@ -117,6 +121,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
             onClick={() => updateSetting("lineHeight", Math.min(2.4, Number((settings.lineHeight + 0.1).toFixed(1))))}
             disabled={settings.lineHeight >= 2.4}
             id="btn-line-inc"
+            aria-label="Increase line spacing"
             className="flex-1 py-1 flex justify-center items-center rounded-sm border border-black/10 dark:border-white/10 disabled:opacity-30 hover:border-black dark:hover:border-white text-black dark:text-white transition-all font-bold text-xs"
           >
             +
@@ -127,7 +132,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
       {/* Content Width controls */}
       <div className="mb-6" id="typo-width">
         <div className="flex items-center justify-between mb-3">
-          <label className="text-[9px] font-sans font-bold text-black/40 dark:text-white/40 uppercase tracking-[0.2em]">
+          <label className="text-[9px] font-sans font-bold text-black/55 dark:text-white/55 uppercase tracking-[0.16em]">
             Content Column
           </label>
           <span className="text-[10px] text-black dark:text-white font-mono tracking-wider font-semibold">{settings.contentWidth}px</span>
@@ -137,6 +142,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
             onClick={() => updateSetting("contentWidth", Math.max(600, settings.contentWidth - 40))}
             disabled={settings.contentWidth <= 600}
             id="btn-width-dec"
+            aria-label="Narrow content column"
             className="flex-1 py-1.5 flex justify-center items-center rounded-sm border border-black/10 dark:border-white/10 disabled:opacity-30 hover:border-black dark:hover:border-white text-black dark:text-white transition-all font-bold text-[9px] uppercase tracking-wider"
           >
             Narrow
@@ -145,6 +151,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
             onClick={() => updateSetting("contentWidth", Math.min(960, settings.contentWidth + 40))}
             disabled={settings.contentWidth >= 960}
             id="btn-width-inc"
+            aria-label="Widen content column"
             className="flex-1 py-1.5 flex justify-center items-center rounded-sm border border-black/10 dark:border-white/10 disabled:opacity-30 hover:border-black dark:hover:border-white text-black dark:text-white transition-all font-bold text-[9px] uppercase tracking-wider"
           >
             Wide
@@ -154,13 +161,14 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
 
       {/* View Mode selection */}
       <div className="mb-6" id="typo-viewmode">
-        <label className="block text-[9px] font-sans font-bold text-black/40 dark:text-white/40 uppercase tracking-[0.2em] mb-3">
+        <label className="block text-[9px] font-sans font-bold text-black/55 dark:text-white/55 uppercase tracking-[0.16em] mb-3">
           Page Layout
         </label>
         <div className="grid grid-cols-2 gap-2">
           <button
             onClick={() => updateSetting("viewMode", "single")}
             id="viewmode-btn-single"
+            aria-pressed={settings.viewMode !== "split"}
             className={`px-3 py-2 text-xs text-center transition-all rounded-sm cursor-pointer border ${
               settings.viewMode !== "split"
                 ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black font-semibold"
@@ -172,6 +180,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
           <button
             onClick={() => updateSetting("viewMode", "split")}
             id="viewmode-btn-split"
+            aria-pressed={settings.viewMode === "split"}
             className={`px-3 py-2 text-xs text-center transition-all rounded-sm cursor-pointer border ${
               settings.viewMode === "split"
                 ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black font-semibold"
@@ -185,7 +194,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
 
       {/* Theme selection */}
       <div id="typo-theme">
-        <label className="block text-[9px] font-sans font-bold text-black/40 dark:text-white/40 uppercase tracking-[0.2em] mb-3">
+        <label className="block text-[9px] font-sans font-bold text-black/55 dark:text-white/55 uppercase tracking-[0.16em] mb-3">
           App Theme
         </label>
         <div className="grid grid-cols-2 gap-2">
@@ -195,6 +204,7 @@ export default function TypographyPanel({ settings, onChange, onClose }: Typogra
               id={`theme-btn-${t.id}`}
               onClick={() => updateSetting("theme", t.id)}
               title={t.label}
+              aria-pressed={settings.theme === t.id}
               className={`relative h-12 rounded-sm border flex flex-col justify-between items-center p-1.5 cursor-pointer transition-all ${t.bg} ${t.border} ${
                 settings.theme === t.id
                   ? "ring-1 ring-black dark:ring-white scale-[1.03] border-black dark:border-white shadow-sm"
