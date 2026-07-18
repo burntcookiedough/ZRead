@@ -94,13 +94,13 @@ export function useReaderLayout({
   }, [columnGap, containerRef]);
 
   const settleLayout = useCallback(
-    (_reason: string) => {
+    (_reason: string, deferMeasurement = true) => {
       if (loading || !chapterContent || !containerRef.current || isSettlingRef.current) return;
       isSettlingRef.current = true;
       setSuppressAnimation(true);
       layoutSettledRef.current = false;
 
-      settleFrameRef.current = requestAnimationFrame(() => {
+      const measureAndCommit = () => {
         settleFrameRef.current = null;
         const metrics = getPaginationMetrics();
         if (!metrics) {
@@ -135,7 +135,13 @@ export function useReaderLayout({
         };
         layoutSettledRef.current = true;
         isSettlingRef.current = false;
-      });
+      };
+
+      if (deferMeasurement) {
+        settleFrameRef.current = requestAnimationFrame(measureAndCommit);
+      } else {
+        measureAndCommit();
+      }
     },
     [
       chapterContent,
@@ -167,7 +173,9 @@ export function useReaderLayout({
       last.height === container.clientHeight;
     if (layoutAlreadySettled) return;
 
-    settleLayout("content");
+    // New chapter HTML initially renders with the previous chapter's transform.
+    // Measure in the layout phase so the target page is committed before paint.
+    settleLayout("content", false);
     return cancelSettleFrame;
   }, [cancelSettleFrame, chapterContent, chapterIndex, containerRef, loading, pendingPageAction, settings, settleLayout]);
 
