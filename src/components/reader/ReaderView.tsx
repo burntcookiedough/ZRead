@@ -529,6 +529,11 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }
   };
 
+  const handleNextPageRef = useRef(handleNextPage);
+  const handlePrevPageRef = useRef(handlePrevPage);
+  handleNextPageRef.current = handleNextPage;
+  handlePrevPageRef.current = handlePrevPage;
+
   // Highlights injector implementation
   /**
    * Produces the chapter HTML with reader-managed highlights and the optional front-cover header.
@@ -803,10 +808,10 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
       if (e.key === "ArrowLeft") {
         e.preventDefault();
-        handlePrevPage();
+        handlePrevPageRef.current();
       } else if (e.key === "ArrowRight") {
         e.preventDefault();
-        handleNextPage();
+        handleNextPageRef.current();
       } else if (e.key === "t" || e.key === "T") {
         // Toggle settings
         e.preventDefault();
@@ -817,7 +822,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showTypography, aiState.visible, currentChapterIdx, chapters, chapterPageIndex, totalChapterPages, closeTypography]);
+  }, [showTypography, aiState.visible, closeTypography]);
 
   // Chapter Summarization callback (from HUD sparking action)
   /**
