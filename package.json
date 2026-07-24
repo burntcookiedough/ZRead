@@ -21,7 +21,7 @@
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@vitejs/plugin-react": "^5.0.4",
-    "dompurify": "^3.4.11",
+    "dompurify": "^3.4.12",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
     "jszip": "^3.10.1",
