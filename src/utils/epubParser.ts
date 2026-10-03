@@ -4,6 +4,7 @@
  */
 
 import JSZip from "jszip";
+import DOMPurify from "dompurify";
 
 export interface ParsedChapter {
   index: number;
@@ -46,7 +47,17 @@ function resolveZipPath(basePath: string, relativePath: string): string {
  * Parses an EPUB file (provided as ArrayBuffer) and extracts its structure.
  */
 export async function parseEpub(arrayBuffer: ArrayBuffer): Promise<ParsedBook> {
+  if (arrayBuffer.byteLength > 128 * 1024 * 1024) throw new Error("EPUB exceeds the 128 MB import limit.");
   const zip = await JSZip.loadAsync(arrayBuffer);
+  let expandedSize = 0;
+  const entries = Object.values(zip.files);
+  if (entries.length > 10_000) throw new Error("EPUB contains too many archive entries.");
+  for (const entry of entries) {
+    const size = (entry as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize || 0;
+    if (size > 64 * 1024 * 1024) throw new Error("An EPUB entry exceeds the 64 MB limit.");
+    expandedSize += size;
+    if (expandedSize > 512 * 1024 * 1024) throw new Error("Expanded EPUB exceeds the 512 MB limit.");
+  }
 
   // 1. Read META-INF/container.xml to find the OPF file path
   const containerFile = zip.file("META-INF/container.xml");
@@ -146,6 +157,7 @@ export async function parseEpub(arrayBuffer: ArrayBuffer): Promise<ParsedBook> {
     }
   }
 
+  if (chapters.length === 0) throw new Error("Invalid EPUB: no readable chapters found.");
   return {
     title,
     author,
@@ -256,7 +268,7 @@ export async function loadChapterContent(
   // Extract the main readable container block
   const body = doc.querySelector("body");
   if (!body) {
-    return rawText;
+    return DOMPurify.sanitize(rawText);
   }
 
   // Remove any raw style tags so they don't break our theme styling
@@ -273,5 +285,26 @@ export async function loadChapterContent(
     }
   });
 
-  return body.innerHTML;
+  // EPUB content is untrusted. Keep local images; prevent scripts, forms and remote tracking assets.
+  body.querySelectorAll("img, image").forEach((image) => {
+    for (const attribute of ["src", "href", "xlink:href", "srcset"]) {
+      const value = image.getAttribute(attribute);
+      if (value && !value.startsWith("blob:")) image.removeAttribute(attribute);
+    }
+  });
+  body.querySelectorAll("*").forEach((element) => {
+    element.removeAttribute("background");
+    if (element.namespaceURI !== "http://www.w3.org/2000/svg") return;
+    for (const attribute of Array.from(element.attributes)) {
+      if ((["href", "xlink:href"].includes(attribute.name) && !/^(#|blob:)/.test(attribute.value)) ||
+          (/url\(/i.test(attribute.value) && !/^url\(\s*['"]?#[-\w]+['"]?\s*\)$/i.test(attribute.value))) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  });
+  return DOMPurify.sanitize(body.innerHTML, {
+    ALLOWED_URI_REGEXP: /^(?:(?:https?|blob):|#)/i,
+    FORBID_TAGS: ["script", "style", "link", "iframe", "object", "embed", "form", "input", "button", "video", "audio", "feimage", "use"],
+    FORBID_ATTR: ["srcset"],
+  });
 }

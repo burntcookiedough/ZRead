@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { MouseEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 
 interface ReaderThemeClasses {
   wrapper: string;
@@ -18,10 +18,13 @@ interface ReaderShellProps {
   activeChapterTitle?: string;
   showSettings: boolean;
   onMouseMove: () => void;
-  onClick: (event: MouseEvent<HTMLDivElement>) => void;
   onBackToLibrary: () => void;
   onSummarizeChapter: () => void;
   onToggleSettings: () => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
+  showVocabulary?: boolean;
+  onToggleVocabulary?: () => void;
 }
 
 export default function ReaderShell({
@@ -32,21 +35,23 @@ export default function ReaderShell({
   activeChapterTitle,
   showSettings,
   onMouseMove,
-  onClick,
   onBackToLibrary,
   onSummarizeChapter,
   onToggleSettings,
+  isFullscreen,
+  onToggleFullscreen,
+  showVocabulary,
+  onToggleVocabulary,
 }: ReaderShellProps) {
   return (
     <div
       onMouseMove={onMouseMove}
-      onClick={onClick}
       id="reader-hud-root"
       className={`relative w-full h-screen overflow-hidden select-text transition-colors duration-300 ${themeStyle.wrapper}`}
     >
       <div
         id="reader-hud-header"
-        className={`absolute top-0 left-0 right-0 h-16 border-b flex items-center justify-between px-6 z-40 backdrop-blur-sm transition-all duration-300 ${
+        className={`absolute top-0 left-0 right-0 h-16 border-b flex items-center justify-between px-3 sm:px-6 z-40 backdrop-blur-sm transition-all duration-300 ${
           hudVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4 pointer-events-none"
         } ${themeStyle.header}`}
       >
@@ -62,7 +67,7 @@ export default function ReaderShell({
 
           <div className="h-4 w-px bg-black/10 dark:bg-white/10"></div>
 
-          <div>
+          <div className="hidden md:block">
             <h4 className="font-serif font-bold text-xs max-w-[150px] md:max-w-[320px] truncate leading-tight italic">
               {bookTitle}
             </h4>
@@ -73,10 +78,14 @@ export default function ReaderShell({
         </div>
 
         <div className="flex items-center gap-2">
+          <button onClick={onToggleVocabulary} aria-expanded={showVocabulary} id="btn-reader-vocabulary" className="border border-current/20 rounded-sm px-2 py-1.5 text-[9px]">Vocabulary</button>
+          <button onClick={onToggleFullscreen} id="btn-reader-fullscreen" className="border border-current/20 rounded-sm px-2 py-1.5 text-[9px]" aria-label={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}>
+            {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+          </button>
           <button
             onClick={onSummarizeChapter}
             id="btn-reader-summarize"
-            title="Summarize chapter [Key: S]"
+            title="Summarize chapter"
             className="px-2.5 py-1.5 rounded-sm border border-black/10 dark:border-white/10 text-black/80 dark:text-white/80 text-[9px] uppercase tracking-[0.15em] font-sans font-bold hover:border-black dark:hover:border-white transition-all cursor-pointer"
           >
             <span>Summarize</span>

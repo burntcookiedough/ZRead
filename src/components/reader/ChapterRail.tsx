@@ -35,18 +35,17 @@ export default function ChapterRail({
   return (
     <div
       id="chapter-edge-nav"
-      className={`fixed right-0 top-1/2 -translate-y-1/2 z-50 flex items-center pr-2 transition-all duration-300 ${
-        showChapterBarPanel ? "pl-80 py-10" : "pl-10 py-10"
-      }`}
+      className="fixed right-0 top-1/2 -translate-y-1/2 z-50 flex items-center pr-2 py-10"
+      onFocus={onShowChapterPanel}
       onMouseEnter={onShowChapterLines}
       onMouseLeave={onHideRail}
       onClick={(e) => e.stopPropagation()}
     >
       <div
-        className={`mr-3 w-72 max-h-[60vh] overflow-y-auto rounded-xl p-3 shadow-2xl border transition-all duration-300 no-scrollbar ${
+        className={`mr-3 w-[min(18rem,calc(100vw-4rem))] max-h-[60vh] overflow-y-auto rounded-xl p-3 shadow-2xl border transition-all duration-300 no-scrollbar ${
           showChapterBarPanel
             ? "opacity-100 translate-x-0 pointer-events-auto"
-            : "opacity-0 translate-x-4 pointer-events-none"
+            : "hidden"
         } ${
           theme === "dark" || theme === "muted"
             ? "bg-neutral-900/90 border-neutral-800 text-white"
@@ -73,9 +72,13 @@ export default function ChapterRail({
         </div>
       </div>
 
-      <div
+      <button
+        type="button"
+        aria-label="Show chapters"
+        aria-expanded={showChapterBarPanel}
+        onClick={onShowChapterPanel}
         className={`flex flex-col items-center justify-between py-2 px-1 cursor-pointer transition-all duration-300 ${
-          showChapterLines ? "opacity-100 translate-x-0" : "opacity-0 translate-x-2 pointer-events-none"
+          showChapterLines ? "opacity-100 translate-x-0" : "opacity-40 translate-x-0"
         }`}
         style={{ height: `${Math.min(350, chapters.length * 12)}px` }}
         onMouseEnter={onShowChapterPanel}
@@ -83,7 +86,6 @@ export default function ChapterRail({
         {chapters.map((_, idx) => (
           <div
             key={idx}
-            onClick={() => onSelectChapter(idx)}
             className={`h-[2px] transition-all duration-200 rounded-full ${
               idx === currentChapterIndex
                 ? "w-6 bg-black dark:bg-white"
@@ -92,7 +94,7 @@ export default function ChapterRail({
             title={`Jump to Chapter ${idx + 1}`}
           />
         ))}
-      </div>
+      </button>
     </div>
   );
 }

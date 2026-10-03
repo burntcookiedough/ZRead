@@ -21,6 +21,9 @@ export interface Highlight {
   bookId: string;
   chapterIndex: number;
   text: string;
+  prefixContext?: string;
+  suffixContext?: string;
+  textOffset?: number;
   color: string; // tailwind color indicator e.g. "bg-yellow-200" or "bg-amber-14"
   note?: string;
   createdAt: string;

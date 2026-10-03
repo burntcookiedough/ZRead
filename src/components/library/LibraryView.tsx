@@ -8,6 +8,9 @@ import { Book } from "../../types";
 import { isTauriRuntime } from "@/app/runtime";
 import { storage } from "@/features/storage";
 import { parseEpub } from "../../utils/epubParser";
+import BackupPanel from "../../features/backup/BackupPanel";
+import AISettings from "../../features/ai/AISettings";
+import { version } from "../../../package.json";
 
 interface LibraryViewProps {
   onBookSelect: (bookId: string) => void;
@@ -22,10 +25,42 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
   const [bookToDelete, setBookToDelete] = useState<Book | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const nativeImportBusy = useRef(false);
 
   // Fetch all books on mount
   useEffect(() => {
     loadBooks();
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/webview").then(async ({ getCurrentWebview }) => {
+      const cleanup = await getCurrentWebview().onDragDropEvent(async event => {
+        if (disposed) return;
+        setDragActive(event.payload.type === "over" || event.payload.type === "enter");
+        if (event.payload.type !== "drop" || nativeImportBusy.current) return;
+        const path = event.payload.paths[0];
+        if (!path) return;
+        nativeImportBusy.current = true;
+        setIsUploading(true);
+        setUploadError(null);
+        try {
+          if (!isEpubFileName(path)) throw new Error("Please drop an EPUB file.");
+          const { readFile } = await import("@tauri-apps/plugin-fs");
+          const bytes = await readFile(path);
+          await importEpubFromBuffer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), getFileNameFromPath(path));
+        } catch (error) {
+          setUploadError(error instanceof Error ? error.message : "Could not import this EPUB.");
+        } finally {
+          nativeImportBusy.current = false;
+          setIsUploading(false);
+        }
+      });
+      if (disposed) cleanup(); else unlisten = cleanup;
+    }).catch(() => setUploadError("Native file drop is unavailable. Use Import Document to choose an EPUB."));
+    return () => { disposed = true; unlisten?.(); };
   }, []);
 
   const loadBooks = async () => {
@@ -35,6 +70,7 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
       setBooks(all);
     } catch (e) {
       console.error("Failed to load local books:", e);
+      setUploadError("Could not load your library. Your reading data has not been deleted. Try reopening the app.");
     } finally {
       setLoading(false);
     }
@@ -196,6 +232,7 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
 
           <button
             onClick={triggerFileBrowser}
+            disabled={isUploading}
             id="btn-upload-nav"
             className="px-4 py-2 rounded-sm border border-black dark:border-white bg-black dark:bg-white text-white dark:text-black text-[9px] uppercase tracking-[0.15em] font-sans font-bold hover:bg-transparent hover:text-black dark:hover:bg-transparent dark:hover:text-white transition-all cursor-pointer"
           >
@@ -264,6 +301,10 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
                   key={book.id}
                   id={`book-card-${book.id}`}
                   onClick={() => onBookSelect(book.id)}
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Read ${book.title}`}
+                  onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onBookSelect(book.id); } }}
                   className="group relative flex flex-col justify-between p-5 rounded-sm border border-black/10 dark:border-white/10 bg-transparent transition-all hover:bg-black/[0.02] dark:hover:bg-white/[0.02] hover:border-black dark:hover:border-white cursor-pointer"
                 >
                   {/* Card top */}
@@ -314,6 +355,14 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
         )}
       </div>
 
+      <BackupPanel onRestore={() => { void loadBooks(); }} />
+      <AISettings />
+      <details className="mt-6 text-xs border-t border-black/10 dark:border-white/10 pt-4">
+        <summary className="cursor-pointer">About ZRead</summary>
+        <p className="mt-2">ZRead {version} · {navigator.userAgent.includes("Windows") ? "Windows" : navigator.userAgent.includes("Linux") ? "Linux" : "Browser preview"}</p>
+        <p className="mt-2 opacity-70">Books and reading data stay on this device. No account or sync is required. Text is sent to your configured AI service only when you request a definition, explanation or chapter summary.</p>
+      </details>
+
       {/* Custom delete validation modal */}
       {bookToDelete && (
         <div id="delete-confirm-modal" className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
@@ -342,6 +391,7 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
                     setBooks((prev) => prev.filter((b) => b.id !== targetId));
                   } catch (err) {
                     console.error("Delete book failed:", err);
+                    setUploadError("Could not remove this book. Your library was kept; try again.");
                   }
                 }}
                 id="btn-delete-confirm"
