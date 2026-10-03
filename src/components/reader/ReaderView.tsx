@@ -250,8 +250,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         // 2. Parse EPUB Structure
         const parsed = await parseEpub(fileBytes);
         if (!active) return;
-        setParsedBook(parsed);
-        setChapters(parsed.chapters);
 
         // 3. Load Book Metadata (from IDB)
         const booksList = await storage.getAllBooks();
@@ -267,6 +265,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           const restoredChapter = lastIdx >= 0 && lastIdx < parsed.chapters.length ? lastIdx : 0;
           currentChapterIndexRef.current = restoredChapter;
           setCurrentChapterIdx(restoredChapter);
+          setParsedBook(parsed);
+          setChapters(parsed.chapters);
           await storage.saveBookMetadata(openedBook);
         } else {
           throw new Error("Metadata for selected book not found.");
@@ -405,7 +405,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   };
 
   const handleBackToLibrary = async () => {
-    await progressSaveQueueRef.current;
+    await Promise.all([progressSaveQueueRef.current, settingsSaveQueueRef.current]);
     onBackToLibrary();
   };
 

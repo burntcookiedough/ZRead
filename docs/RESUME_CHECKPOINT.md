@@ -13,6 +13,8 @@ Date: 2026-10-03. `V1_SCOPE.md` remains the product contract.
 
 Work branch: `codex/finish-zread-v1`, targeting `dev`.
 
+Normal PR: https://github.com/burntcookiedough/ZRead/pull/32. The user requires ready-for-review PRs, never drafts. Follow-up automation: `zread-v1-review-and-release-checks`, every 10 minutes while review/CI work remains. CodeRabbit CLI completed the initial review with four issues; the reader races and highlight text mismatch are being corrected. The developer-specific QA artifact path below is intentionally retained for local resumption, rather than moving temporary verification scripts into the project.
+
 - Reader layout now has one measurement hook using ResizeObserver, animation frames, image load events and font readiness. Normalized chapter position survives typography, split/single and viewport changes. Stale chapter loads are ignored. Progress and settings writes run in order.
 - Desktop SQLite stores books/progress, highlights, vocabulary and reader settings. Startup waits for readiness and recoverable legacy migration. Migration retains the source records, checks its completion marker before touching IndexedDB, and copies legacy EPUBs into app data.
 - Explicit book deletion cascades in SQLite and removes copied EPUBs and associated legacy records. Filesystem/metadata failures attempt rollback; a second failure during rollback is reported as incomplete recovery.

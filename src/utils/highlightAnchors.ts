@@ -19,6 +19,7 @@ export function captureHighlightAnchor(root: Node, range: Range) {
   const trimStart = selected.length - selected.trimStart().length;
   const offset = start + trimStart;
   return {
+    ...(selected.trim() ? { text: selected.trim() } : {}),
     textOffset: offset,
     prefixContext: text.slice(Math.max(0, offset - 48), offset),
     suffixContext: text.slice(offset + selected.trim().length, offset + selected.trim().length + 48),
