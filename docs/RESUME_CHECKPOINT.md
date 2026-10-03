@@ -13,7 +13,7 @@ Date: 2026-10-03. `V1_SCOPE.md` remains the product contract.
 
 Work branch: `codex/finish-zread-v1`, targeting `dev`.
 
-Normal PR: https://github.com/burntcookiedough/ZRead/pull/32. The user requires ready-for-review PRs, never drafts. Follow-up automation: `zread-v1-review-and-release-checks`, every 10 minutes while review/CI work remains. CodeRabbit CLI completed the initial review with four issues; the reader races and highlight text mismatch are being corrected. The developer-specific QA artifact path below is intentionally retained for local resumption, rather than moving temporary verification scripts into the project.
+Normal PR: https://github.com/burntcookiedough/ZRead/pull/32. The user requires ready-for-review PRs, never drafts. Follow-up automation: `zread-v1-review-and-release-checks`, every 10 minutes while review/CI work remains. CodeRabbit CLI completed the initial review with four issues. The reader initialization race, queued settings return, highlight range text mismatch and checkpoint portability corrections are implemented; delayed-storage browser checks passed.
 
 - Reader layout now has one measurement hook using ResizeObserver, animation frames, image load events and font readiness. Normalized chapter position survives typography, split/single and viewport changes. Stale chapter loads are ignored. Progress and settings writes run in order.
 - Desktop SQLite stores books/progress, highlights, vocabulary and reader settings. Startup waits for readiness and recoverable legacy migration. Migration retains the source records, checks its completion marker before touching IndexedDB, and copies legacy EPUBs into app data.
@@ -34,7 +34,7 @@ Normal PR: https://github.com/burntcookiedough/ZRead/pull/32. The user requires 
 - Native Tauri QA used the isolated identifier `app.zread.verification`. It verified real SQL and filesystem plugin behavior, legacy migration, backup round trip, deletion cascade, disabled AI, configured local AI success/error/cancellation, and vocabulary display.
 - A real native process restart preserved the copied EPUB, SQLite book/progress/highlight/vocabulary records and reader settings. Reader position restored on reopening.
 - The Windows NSIS build produced `src-tauri/target/release/bundle/nsis/ZRead_0.1.0_x64-setup.exe`. Rebuild after any subsequent source corrections before distributing it.
-- Local QA scripts and result files are outside the repository at `C:/Users/anshu/AppData/Local/Temp/zread-verification/`. Native QA data is isolated from the user's production library.
+- Local QA scripts and result files are kept outside the repository. Native QA data is isolated from the user's production library.
 
 ## Remaining release acceptance
 
