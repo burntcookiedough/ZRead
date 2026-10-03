@@ -133,12 +133,11 @@ export default function SelectionMenu({ onAction, onClose }: SelectionMenuProps)
       id="selection-floating-menu"
       style={{
         position: "absolute",
-        top: `${coords.top}px`,
-        left: `${coords.left}px`,
-        transform: "translateX(-50%)",
+        top: `${Math.max(8, coords.top)}px`,
+        left: `${Math.max(8, Math.min(coords.left - 280, window.innerWidth - 568))}px`,
         zIndex: 9999,
       }}
-      className="flex items-center gap-px p-0.5 rounded-sm shadow-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 backdrop-blur-md transition-all duration-150 animate-in fade-in zoom-in-95 font-sans"
+      className="flex flex-wrap items-center gap-px p-0.5 w-max max-w-[calc(100vw-16px)] rounded-sm shadow-2xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-900 backdrop-blur-md transition-all duration-150 animate-in fade-in zoom-in-95 font-sans"
     >
       {/* Short quick action labels */}
       <button

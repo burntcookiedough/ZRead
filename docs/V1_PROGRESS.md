@@ -1,5 +1,7 @@
 # ZRead V1 Progress Map
 
+Updated 2026-10-03: this map describes the earlier merged baseline. The active continuation now implements reader layout stabilization, SQLite persistence and migration, contextual highlights, vocabulary viewing, optional desktop AI, and backup/restore. See [RESUME_CHECKPOINT.md](RESUME_CHECKPOINT.md) for current verification and remaining release acceptance. This historical phase map does not establish release completion.
+
 ## Status
 
 ```text

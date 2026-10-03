@@ -5,20 +5,32 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Book, Highlight, SavedWord, ReaderSettings, ReaderTheme } from "../../types";
-import { storage } from "@/features/storage";
+import { DEFAULT_READER_SETTINGS, storage } from "@/features/storage";
 import { parseEpub, loadChapterContent, ParsedBook, ParsedChapter } from "../../utils/epubParser";
 // No icons needed for text-only interface
 import SelectionMenu from "./SelectionMenu";
 import AIResponsePopover from "./AIResponsePopover";
+import VocabularyPanel from "./VocabularyPanel";
 import { triggerAIAction } from "../../utils/aiClient";
+import { captureHighlightAnchor, restoreHighlights } from "../../utils/highlightAnchors";
 import { ChapterRail, ReaderFooter, ReaderSettingsPanel, ReaderShell } from "./index";
+import { clampSourcePercent, READER_COLUMN_GAP, ReaderPositionAction } from "./readerLayout";
+import { useReaderLayout } from "./hooks/useReaderLayout";
 
 interface ReaderViewProps {
   bookId: string;
   onBackToLibrary: () => void;
 }
 
-const COLUMN_GAP = 48;
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character] || character);
+}
 
 /**
  * Renders an EPUB reading surface with paginated navigation, reader settings, annotations, and AI actions.
@@ -32,27 +44,79 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   const [chapterContent, setChapterContent] = useState<string>("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [settingsReady, setSettingsReady] = useState(false);
 
-  // Page Navigation States
-  const [chapterPageIndex, setChapterPageIndex] = useState(0);
-  const [totalChapterPages, setTotalChapterPages] = useState(1);
-  const [viewportWidth, setViewportWidth] = useState(0);
-  const [pendingPageAction, setPendingPageAction] = useState<"first" | "last" | "restore" | null>("restore");
-  const [suppressAnimation, setSuppressAnimation] = useState(true);
-  const [layoutSettled, setLayoutSettled] = useState(false);
   const [showChapterBarPanel, setShowChapterBarPanel] = useState(false);
   const [showChapterLines, setShowChapterLines] = useState(false);
 
   // Reader HUD Control States
   const [hudVisible, setHudVisible] = useState(true);
   const [showTypography, setShowTypography] = useState(false);
+  const [showVocabulary, setShowVocabulary] = useState(false);
 
   // Active highlights & Vocab
   const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [savedWords, setSavedWords] = useState<SavedWord[]>([]);
 
   // Reader Settings
-  const [settings, setSettings] = useState<ReaderSettings>(storage.getReaderSettings());
+  const [settings, setSettings] = useState<ReaderSettings>(DEFAULT_READER_SETTINGS);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [aiState, setAiState] = useState<{
+    visible: boolean;
+    type: "define" | "explain" | "summarize";
+    inputText: string;
+    result: any;
+    loading: boolean;
+    error: string | null;
+  }>({
+    visible: false,
+    type: "define",
+    inputText: "",
+    result: null,
+    loading: false,
+    error: null,
+  });
+  const aiRequestControllerRef = useRef<AbortController | null>(null);
+
+  const cancelAIRequest = useCallback(() => {
+    aiRequestControllerRef.current?.abort();
+    aiRequestControllerRef.current = null;
+  }, []);
+
+  useEffect(() => () => cancelAIRequest(), [cancelAIRequest]);
+
+  useEffect(() => {
+    let active = true;
+    storage.getReaderSettings().then((storedSettings) => {
+      if (active) setSettings(storedSettings);
+    }).catch((err) => {
+      console.error("Reader settings could not be loaded:", err);
+      if (active) setError("Reader settings could not be loaded from local storage.");
+    }).finally(() => {
+      if (active) setSettingsReady(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const currentBookMetaRef = useRef(currentBookMeta);
+  const currentChapterIndexRef = useRef(currentChapterIdx);
+  currentBookMetaRef.current = currentBookMeta;
+  currentChapterIndexRef.current = currentChapterIdx;
+
+  const layout = useReaderLayout({
+    contentReady: settingsReady && !loading && !error && !!chapterContent,
+    contentKey: `${bookId}:${currentChapterIdx}`,
+    layoutKey: [settings.fontFamily, settings.fontSize, settings.lineHeight, settings.contentWidth, settings.viewMode].join(":"),
+    savedProgressPercent: currentBookMeta?.progress?.scrollPercent || 0,
+  });
+
+  useEffect(() => {
+    layout.setNextPosition("restore");
+    setLoading(true);
+    setChapterContent("");
+  }, [bookId, layout.setNextPosition]);
 
   // Sync document root dark class list with theme setting
   useEffect(() => {
@@ -64,7 +128,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
   }, [settings.theme]);
 
   // Fullscreen State and change listeners
-  const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
@@ -86,92 +149,21 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     };
   }, []);
 
-  /**
-   * Detects controls and overlays whose clicks should not trigger immersive reader behavior.
-   */
-  const isInteractiveTarget = (target: HTMLElement) => {
-    return !!target.closest(
-      "button, input, textarea, select, a, " +
-        "#reader-hud-header, #reader-footer, #typo-panel-sec, " +
-        "#selection-floating-menu, #ai-response-popover, #chapter-edge-nav, #toast-notification"
-    );
-  };
-
-  /**
-   * Enters fullscreen only for direct reading-surface clicks, leaving controls interactive.
-   */
-  const handleGlobalClick = (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (isInteractiveTarget(target)) {
-      return;
-    }
-
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch((err) => {
-        console.warn("Fullscreen request blocked or failed:", err);
-      });
-    }
-  };
-
   // HUD disappear timers
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // AI Popover state
-  const [aiState, setAiState] = useState<{
-    visible: boolean;
-    type: "define" | "explain" | "summarize";
-    inputText: string;
-    result: any;
-    loading: boolean;
-    error: string | null;
-  }>({
-    visible: false,
-    type: "define",
-    inputText: "",
-    result: null,
-    loading: false,
-    error: null,
-  });
 
   // Toast / Floating message notification
   const [notification, setNotification] = useState<{ text: string; onUndo?: () => void } | null>(null);
   const [toastTimeoutId, setToastTimeoutId] = useState<any>(null);
-
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chapterPageIndexRef = useRef(chapterPageIndex);
-  const currentBookMetaRef = useRef(currentBookMeta);
-  useEffect(() => {
-    chapterPageIndexRef.current = chapterPageIndex;
-  }, [chapterPageIndex]);
+  const progressSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const settingsSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const readerDisposedRef = useRef(false);
 
   useEffect(() => {
-    currentBookMetaRef.current = currentBookMeta;
-  }, [currentBookMeta]);
-
-  /**
-   * Measures the rendered chapter width and converts it into page-count metadata.
-   */
-  const getPaginationMetrics = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return null;
-
-    const viewport = container.clientWidth;
-    if (viewport <= 0) return null;
-
-    const content = container.querySelector<HTMLElement>("#reader-chapter-body");
-    const scrollWidth = content?.scrollWidth || container.scrollWidth;
-    const stride = viewport + COLUMN_GAP;
-    const total = Math.max(1, Math.ceil((scrollWidth + COLUMN_GAP) / stride));
-
-    return { viewport, total };
-  }, []);
-
-  /**
-   * Converts persisted chapter progress into a valid page index for the current layout.
-   */
-  const pageForSavedPercent = useCallback((total: number) => {
-    const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
-    return Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
+    readerDisposedRef.current = false;
+    return () => {
+      readerDisposedRef.current = true;
+    };
   }, []);
 
   const activeChapterRef = useRef<HTMLButtonElement>(null);
@@ -193,7 +185,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     
     timerRef.current = setTimeout(() => {
       // Don't auto-hide HUD if configuration dialog or AI result is open
-      if (!showTypography && !aiState.visible) {
+      const focusedControl = document.activeElement instanceof HTMLElement &&
+        !!document.activeElement.closest("button, input, textarea, select, a, [role='button']");
+      if (!showTypography && !aiState.visible && !focusedControl) {
         setHudVisible(false);
       }
     }, 2500);
@@ -203,6 +197,15 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     refreshHudTimeout();
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [refreshHudTimeout]);
+
+  useEffect(() => {
+    document.addEventListener("focusin", refreshHudTimeout);
+    document.addEventListener("focusout", refreshHudTimeout);
+    return () => {
+      document.removeEventListener("focusin", refreshHudTimeout);
+      document.removeEventListener("focusout", refreshHudTimeout);
     };
   }, [refreshHudTimeout]);
 
@@ -231,6 +234,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   // Fetch file & parse EPUB
   useEffect(() => {
+    let active = true;
     const initializeBook = async () => {
       try {
         setLoading(true);
@@ -238,53 +242,56 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
         // 1. Fetch raw binary file from IDB
         const fileBytes = await storage.getBookFile(bookId);
+        if (!active) return;
         if (!fileBytes) {
           throw new Error("Local book binary data file not found in database.");
         }
 
         // 2. Parse EPUB Structure
         const parsed = await parseEpub(fileBytes);
+        if (!active) return;
         setParsedBook(parsed);
         setChapters(parsed.chapters);
 
         // 3. Load Book Metadata (from IDB)
         const booksList = await storage.getAllBooks();
+        if (!active) return;
         const thisBook = booksList.find((b) => b.id === bookId);
 
         if (thisBook) {
-          setCurrentBookMeta(thisBook);
+          const openedBook = { ...thisBook, lastOpenedAt: new Date().toISOString() };
+          currentBookMetaRef.current = openedBook;
+          setCurrentBookMeta(openedBook);
           // Restore last chapter index
           const lastIdx = thisBook.progress ? thisBook.progress.chapterIndex : 0;
-          setCurrentChapterIdx(
-            lastIdx >= 0 && lastIdx < parsed.chapters.length ? lastIdx : 0
-          );
+          const restoredChapter = lastIdx >= 0 && lastIdx < parsed.chapters.length ? lastIdx : 0;
+          currentChapterIndexRef.current = restoredChapter;
+          setCurrentChapterIdx(restoredChapter);
+          await storage.saveBookMetadata(openedBook);
         } else {
           throw new Error("Metadata for selected book not found.");
         }
 
-        // Update last opened timeline
-        if (thisBook) {
-          await storage.saveBookMetadata({
-            ...thisBook,
-            lastOpenedAt: new Date().toISOString(),
-          });
-        }
-
         // 4. Load initial collections
         const dbHighlights = await storage.getBookHighlights(bookId);
+        if (!active) return;
         setHighlights(dbHighlights);
         const dbWords = await storage.getBookSavedWords(bookId);
+        if (!active) return;
         setSavedWords(dbWords);
 
       } catch (err: any) {
         console.error("Reader initialization failed:", err);
-        setError(err.message || "An issue occurred while loading this EPUB reader engine.");
+        if (active) setError(err.message || "An issue occurred while loading this EPUB reader engine.");
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
     initializeBook();
+    return () => {
+      active = false;
+    };
   }, [bookId]);
 
   // Read raw highlights for the current book
@@ -304,58 +311,102 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     setSavedWords(dbWords);
   };
 
+  const handleDeleteSavedWord = async (word: SavedWord) => {
+    try {
+      await storage.deleteSavedWord(word.id);
+      await loadSavedWords();
+      showToast("Saved word removed.");
+    } catch (err) {
+      console.error("Could not remove saved word:", err);
+      showToast("Could not remove saved word.");
+    }
+  };
+
   // Load active chapter content when chapter index changes
   useEffect(() => {
     if (!parsedBook || chapters.length === 0) return;
+    const activeChapter = chapters[currentChapterIdx];
+    if (!activeChapter) return;
+    let active = true;
+    const imageUrls: string[] = [];
 
     const loadChapter = async () => {
       try {
         setLoading(true);
-        setLayoutSettled(false);
-        setSuppressAnimation(true);
-        const activeChapter = chapters[currentChapterIdx];
-        
         // Load, rewrite images, scrape styles
-        const html = await loadChapterContent(parsedBook.zipInstance, activeChapter.zipPath);
+        const html = await loadChapterContent(parsedBook.zipInstance, activeChapter.zipPath, url => {
+          if (active) imageUrls.push(url);
+          else URL.revokeObjectURL(url);
+        });
+        if (!active) return;
         setChapterContent(html);
 
-        if (containerRef.current) {
-          containerRef.current.scrollLeft = 0;
+        if (layout.containerRef.current) {
+          layout.containerRef.current.scrollLeft = 0;
         }
       } catch (e) {
         console.error("Failed to load chapter content:", e);
-        setChapterContent("<p class='error'>Failed loading chapter text. The page might be corrupted or missing.</p>");
+        if (active) {
+          setChapterContent("<p class='error'>Failed loading chapter text. The page might be corrupted or missing.</p>");
+        }
       } finally {
-        setLoading(false);
+        if (active) setLoading(false);
       }
     };
 
     loadChapter();
+    return () => {
+      active = false;
+      imageUrls.forEach(url => URL.revokeObjectURL(url));
+    };
   }, [currentChapterIdx, parsedBook, chapters]);
 
-  // Helper to save reading progress as percentage based on current page
+  // Helper to save reading progress as a normalized chapter position
   /**
-   * Persists the reader's current chapter and page as percentage-based progress.
+   * Persists the reader's current chapter and movement unit as normalized progress.
    */
-  const saveReadingProgress = (pageIdx: number, totalPages: number) => {
-    if (!currentBookMeta) return;
-    const percent = totalPages > 1 ? (pageIdx / (totalPages - 1)) * 100 : 0;
-    
+  const saveReadingProgress = (chapterIndex: number, sourcePercent: number) => {
+    const bookMeta = currentBookMetaRef.current;
+    if (!bookMeta || bookMeta.id !== bookId) return;
     const updatedMeta: Book = {
-      ...currentBookMeta,
+      ...bookMeta,
       lastOpenedAt: new Date().toISOString(),
       progress: {
-        chapterIndex: currentChapterIdx,
-        scrollPercent: Number(percent.toFixed(2)),
+        chapterIndex,
+        scrollPercent: Number(clampSourcePercent(sourcePercent).toFixed(2)),
       },
     };
+    currentBookMetaRef.current = updatedMeta;
     setCurrentBookMeta(updatedMeta);
-    
-    const timeoutId = (window as any)._dbSaveTimeout;
-    if (timeoutId) clearTimeout(timeoutId);
-    (window as any)._dbSaveTimeout = setTimeout(() => {
-      storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
-    }, 800);
+    progressSaveQueueRef.current = progressSaveQueueRef.current
+      .catch(() => {})
+      .then(() => readerDisposedRef.current ? undefined : storage.saveBookMetadata(updatedMeta))
+      .catch((e) => console.error("Auto progress save failed", e));
+  };
+
+  useEffect(() => {
+    if (!layout.layoutSettled || loading || !settingsReady) return;
+    saveReadingProgress(currentChapterIdx, layout.getSourcePercent());
+  }, [layout.layoutSettled, layout.getSourcePercent, currentChapterIdx, loading, settingsReady, bookId]);
+
+  const navigateToChapter = (targetChapter: number, position: ReaderPositionAction) => {
+    if (!chapters.length) return;
+    const nextChapter = Math.min(chapters.length - 1, Math.max(0, targetChapter));
+    if (nextChapter === currentChapterIndexRef.current) {
+      layout.requestPosition(position);
+      return;
+    }
+
+    saveReadingProgress(nextChapter, position === "last" ? 100 : 0);
+    layout.setNextPosition(position);
+    setLoading(true);
+    currentChapterIndexRef.current = nextChapter;
+    setCurrentChapterIdx(nextChapter);
+  };
+
+  const handleBackToLibrary = async () => {
+    await progressSaveQueueRef.current;
+    onBackToLibrary();
   };
 
   // Centralized page turning handlers
@@ -363,16 +414,14 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
    * Advances within the chapter or moves to the first page of the next chapter.
    */
   const handleNextPage = () => {
-    if (chapterPageIndex < totalChapterPages - 1) {
-      const nextP = chapterPageIndex + 1;
-      setSuppressAnimation(false);
-      setChapterPageIndex(nextP);
-      saveReadingProgress(nextP, totalChapterPages);
+    if (!layout.layoutSettled) return;
+    const { unitIndex, unitCount } = layout.getPosition();
+    if (unitIndex < unitCount - 1) {
+      layout.goToUnit(unitIndex + 1);
+      saveReadingProgress(currentChapterIndexRef.current, layout.getSourcePercent());
     } else {
-      if (currentChapterIdx < chapters.length - 1) {
-        setSuppressAnimation(true);
-        setPendingPageAction("first");
-        setCurrentChapterIdx((prev) => prev + 1);
+      if (currentChapterIndexRef.current < chapters.length - 1) {
+        navigateToChapter(currentChapterIndexRef.current + 1, "first");
       } else {
         showToast("You have reached the end of the book.");
       }
@@ -383,101 +432,20 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
    * Moves backward within the chapter or to the last page of the previous chapter.
    */
   const handlePrevPage = () => {
-    if (chapterPageIndex > 0) {
-      const prevP = chapterPageIndex - 1;
-      setSuppressAnimation(false);
-      setChapterPageIndex(prevP);
-      saveReadingProgress(prevP, totalChapterPages);
+    if (!layout.layoutSettled) return;
+    const { unitIndex } = layout.getPosition();
+    if (unitIndex > 0) {
+      layout.goToUnit(unitIndex - 1);
+      saveReadingProgress(currentChapterIndexRef.current, layout.getSourcePercent());
     } else {
-      if (currentChapterIdx > 0) {
-        setSuppressAnimation(true);
-        setPendingPageAction("last");
-        setCurrentChapterIdx((prev) => prev - 1);
+      if (currentChapterIndexRef.current > 0) {
+        navigateToChapter(currentChapterIndexRef.current - 1, "last");
       } else {
         showToast("You are at the very beginning of the book.");
       }
     }
   };
 
-  // Recalculates horizontal scroll offset on window resize
-  /**
-   * Recomputes pagination after viewport changes while preserving the current page when possible.
-   */
-  const recalculatePages = useCallback(() => {
-    setSuppressAnimation(true);
-    const metrics = getPaginationMetrics();
-    if (!metrics) return;
-    const { viewport, total } = metrics;
-    setViewportWidth(viewport);
-    setTotalChapterPages(total);
-    const targetPage = Math.min(total - 1, chapterPageIndexRef.current);
-    setChapterPageIndex(targetPage);
-
-    setTimeout(() => {
-      setSuppressAnimation(false);
-    }, 50);
-  }, [getPaginationMetrics]);
-
-  // Window resize handler
-  useEffect(() => {
-    const handleResize = () => {
-      setSuppressAnimation(true);
-      recalculatePages();
-    };
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [recalculatePages]);
-
-  // Recalculate pages and scroll position when chapter finishes loading or settings change
-  useEffect(() => {
-    if (loading || !chapterContent || !containerRef.current) return;
-
-    const timer = setTimeout(() => {
-      const metrics = getPaginationMetrics();
-      if (!metrics) return;
-      const { viewport, total } = metrics;
-
-      setViewportWidth(viewport);
-      setTotalChapterPages(total);
-
-      let targetPage = chapterPageIndexRef.current;
-      if (pendingPageAction === "last") {
-        targetPage = total - 1;
-      } else if (pendingPageAction === "first") {
-        targetPage = 0;
-      } else if (pendingPageAction === "restore") {
-        targetPage = pageForSavedPercent(total);
-      } else {
-        targetPage = Math.min(total - 1, Math.max(0, chapterPageIndexRef.current));
-      }
-
-      setChapterPageIndex(targetPage);
-      setPendingPageAction(null);
-      
-      // Save progress immediately
-      const percent = total > 1 ? (targetPage / (total - 1)) * 100 : 0;
-      const meta = currentBookMetaRef.current;
-      if (meta) {
-        const updatedMeta: Book = {
-          ...meta,
-          lastOpenedAt: new Date().toISOString(),
-          progress: {
-            chapterIndex: currentChapterIdx,
-            scrollPercent: Number(percent.toFixed(2)),
-          },
-        };
-        setCurrentBookMeta(updatedMeta);
-        storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
-      }
-
-      setLayoutSettled(true);
-      setTimeout(() => {
-        setSuppressAnimation(false);
-      }, 50);
-    }, 150);
-
-    return () => clearTimeout(timer);
-  }, [loading, chapterContent, pendingPageAction, settings, currentChapterIdx, getPaginationMetrics, pageForSavedPercent]);
 
   // Highlights injector implementation
   /**
@@ -487,80 +455,20 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     let content = chapterContent;
     if (!content) return "";
     
-    // Highlights applicable only for this chapter path
     const chapterHighlights = highlights.filter((h) => h.chapterIndex === currentChapterIdx);
-    
-    if (chapterHighlights.length > 0) {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(content, "text/html");
-      
-      // Sort highlights from longest text to shortest
-      const sorted = [...chapterHighlights].sort((a, b) => b.text.length - a.text.length);
-      
-      const traverse = (node: Node) => {
-        if (node.nodeType === Node.TEXT_NODE) {
-          const text = node.textContent || "";
-          let parent = node.parentNode;
-          if (
-            !parent ||
-            parent.nodeName === "SCRIPT" ||
-            parent.nodeName === "STYLE" ||
-            (parent instanceof HTMLElement && parent.getAttribute("data-highlight-id"))
-          ) {
-            return;
-          }
-          
-          for (const h of sorted) {
-            const index = text.toLowerCase().indexOf(h.text.toLowerCase());
-            if (index !== -1) {
-              const beforeText = text.substring(0, index);
-              const matchText = text.substring(index, index + h.text.length);
-              const afterText = text.substring(index + h.text.length);
-              
-              const fragment = document.createDocumentFragment();
-              if (beforeText) {
-                fragment.appendChild(document.createTextNode(beforeText));
-              }
-              
-              const span = document.createElement("span");
-              span.className = `${h.color} cursor-pointer relative py-0.5 select-all hover:opacity-95 transition-opacity`;
-              span.setAttribute("data-highlight-id", h.id);
-              span.title = "Delete highlight";
-              span.appendChild(document.createTextNode(matchText));
-              fragment.appendChild(span);
-              
-              if (afterText) {
-                const remainingTextNode = document.createTextNode(afterText);
-                fragment.appendChild(remainingTextNode);
-                // Traverse subsequent text nodes
-                traverse(remainingTextNode);
-              }
-              
-              parent.replaceChild(fragment, node);
-              break;
-            }
-          }
-        } else {
-          const children = Array.from(node.childNodes);
-          for (const child of children) {
-            traverse(child);
-          }
-        }
-      };
-      
-      traverse(doc.body);
-      content = doc.body.innerHTML;
-    }
+    if (chapterHighlights.length) content = restoreHighlights(content, chapterHighlights);
 
     // Prepend custom front cover header inside the columns for chapter 0
     if (currentChapterIdx === 0 && parsedBook) {
+      const title = escapeHtml(parsedBook.title);
+      const author = escapeHtml(parsedBook.author);
       const coverHtml = `
         <div class="mb-10 pb-6 border-b border-black/10 dark:border-white/10 text-center select-none animate-in fade-in duration-300" style="break-inside: avoid-column; break-after: auto;" id="book-front-cover">
           <h1 class="font-serif font-bold text-3xl md:text-4xl my-2 text-center leading-tight border-none pb-0">
-            ${parsedBook.title}
+            ${title}
           </h1>
           <p class="font-sans text-[10px] uppercase tracking-widest text-black/50 dark:text-white/50 font-bold mb-8">
-            by ${parsedBook.author}
+            by ${author}
           </p>
         </div>
       `;
@@ -630,6 +538,11 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
     } else if (action === "highlight") {
       const colorClass = extra || "custom-highlight-yellow";
+      const highlightRoot = layout.contentRef.current;
+      const selectedRange = selection?.rangeCount ? selection.getRangeAt(0) : null;
+      const anchor = highlightRoot && selectedRange
+        ? captureHighlightAnchor(highlightRoot, selectedRange)
+        : {};
       const newHl: Highlight = {
         id: `hl_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
         bookId,
@@ -637,6 +550,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         text,
         color: colorClass,
         createdAt: new Date().toISOString(),
+        ...anchor,
       };
 
       await storage.saveHighlight(newHl);
@@ -645,7 +559,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       selection?.removeAllRanges();
 
     } else if (action === "save") {
-      // Save word callback (defines dynamically with AI behind the scenes!)
       const wordId = `word_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
       
       const newSaved: SavedWord = {
@@ -660,29 +573,11 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       await loadSavedWords();
       showToast(`Saved "${text}" to vocabulary.`);
 
-      // Lazily request definition for background enhancement!
-      try {
-        const enriched = await triggerAIAction({
-          action: "define",
-          word: text,
-          context: sentenceContext,
-          bookTitle: parsedBook?.title,
-        });
-
-        if (enriched) {
-          await storage.saveSavedWord({
-            ...newSaved,
-            definition: enriched.definition,
-            contextualMeaning: enriched.contextualMeaning,
-            simpleExample: enriched.simpleExample,
-          });
-          await loadSavedWords();
-        }
-      } catch (err) {
-        console.error("Failed to fetch vocabulary word description background enrichment:", err);
-      }
-
     } else if (action === "define") {
+      setShowVocabulary(false);
+      cancelAIRequest();
+      const controller = new AbortController();
+      aiRequestControllerRef.current = controller;
       // Open AI Popover
       setAiState({
         visible: true,
@@ -699,14 +594,24 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           word: text,
           context: sentenceContext,
           bookTitle: parsedBook?.title,
-        });
+        }, { signal: controller.signal });
 
-        setAiState((prev) => ({ ...prev, loading: false, result: res }));
+        if (aiRequestControllerRef.current === controller) {
+          setAiState((prev) => ({ ...prev, loading: false, result: res }));
+        }
       } catch (err: any) {
-        setAiState((prev) => ({ ...prev, loading: false, error: getAIErrorMessage(err, "AI definition") }));
+        if (!controller.signal.aborted && aiRequestControllerRef.current === controller) {
+          setAiState((prev) => ({ ...prev, loading: false, error: getAIErrorMessage(err, "AI definition") }));
+        }
+      } finally {
+        if (aiRequestControllerRef.current === controller) aiRequestControllerRef.current = null;
       }
 
     } else if (action === "explain") {
+      setShowVocabulary(false);
+      cancelAIRequest();
+      const controller = new AbortController();
+      aiRequestControllerRef.current = controller;
       setAiState({
         visible: true,
         type: "explain",
@@ -721,11 +626,17 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           action: "explain",
           text,
           bookTitle: parsedBook?.title,
-        });
+        }, { signal: controller.signal });
 
-        setAiState((prev) => ({ ...prev, loading: false, result: res }));
+        if (aiRequestControllerRef.current === controller) {
+          setAiState((prev) => ({ ...prev, loading: false, result: res }));
+        }
       } catch (err: any) {
-        setAiState((prev) => ({ ...prev, loading: false, error: getAIErrorMessage(err, "AI explanation") }));
+        if (!controller.signal.aborted && aiRequestControllerRef.current === controller) {
+          setAiState((prev) => ({ ...prev, loading: false, error: getAIErrorMessage(err, "AI explanation") }));
+        }
+      } finally {
+        if (aiRequestControllerRef.current === controller) aiRequestControllerRef.current = null;
       }
     }
   };
@@ -736,18 +647,16 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       // Escape closes current overlays
       if (e.key === "Escape") {
         if (showTypography) setShowTypography(false);
-        else if (aiState.visible) setAiState((prev) => ({ ...prev, visible: false }));
+        else if (aiState.visible) {
+          cancelAIRequest();
+          setAiState((prev) => ({ ...prev, visible: false }));
+        } else if (showVocabulary) setShowVocabulary(false);
         return;
       }
 
       // Prev chapter on left arrow, next on right arrow (no input field overlay blocks active)
       if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
         return;
-      }
-
-      // Automatically request fullscreen on reading navigation keyboard interaction
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
       }
 
       if (e.key === "ArrowLeft") {
@@ -759,13 +668,14 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       } else if (e.key === "t" || e.key === "T") {
         // Toggle settings
         e.preventDefault();
+        setShowVocabulary(false);
         setShowTypography((prev) => !prev);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showTypography, aiState.visible, currentChapterIdx, chapters, chapterPageIndex, totalChapterPages]);
+  }, [showTypography, aiState.visible, showVocabulary, cancelAIRequest, handlePrevPage, handleNextPage]);
 
   // Chapter Summarization callback (from HUD sparking action)
   /**
@@ -773,6 +683,10 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
    */
   const handleSummarizeChapter = async () => {
     if (!chapterContent) return;
+    setShowVocabulary(false);
+    cancelAIRequest();
+    const controller = new AbortController();
+    aiRequestControllerRef.current = controller;
     
     // Scrape clean text nodes for summarizer context
     const cleanText = document.getElementById("reader-chapter-body")?.innerText || "Unknown text content.";
@@ -791,11 +705,17 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         action: "summarize",
         text: cleanText.slice(0, 8000), // safe length
         bookTitle: parsedBook?.title,
-      });
+      }, { signal: controller.signal });
 
-      setAiState((prev) => ({ ...prev, loading: false, result: res }));
+      if (aiRequestControllerRef.current === controller) {
+        setAiState((prev) => ({ ...prev, loading: false, result: res }));
+      }
     } catch (err: any) {
-      setAiState((prev) => ({ ...prev, loading: false, error: err.message || "An issue occurred invoking Gemini." }));
+      if (!controller.signal.aborted && aiRequestControllerRef.current === controller) {
+        setAiState((prev) => ({ ...prev, loading: false, error: getAIErrorMessage(err, "AI summary") }));
+      }
+    } finally {
+      if (aiRequestControllerRef.current === controller) aiRequestControllerRef.current = null;
     }
   };
 
@@ -804,9 +724,24 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
    * Persists typography and layout settings while prompting pagination to settle again.
    */
   const handleSettingsChange = (newSettings: ReaderSettings) => {
-    setSuppressAnimation(true);
     setSettings(newSettings);
-    storage.saveReaderSettings(newSettings);
+    settingsSaveQueueRef.current = settingsSaveQueueRef.current
+      .catch(() => {})
+      .then(() => storage.saveReaderSettings(newSettings))
+      .catch((err) => {
+        console.error("Reader settings could not be saved:", err);
+        if (!readerDisposedRef.current) showToast("Reader settings could not be saved.");
+      });
+  };
+
+  const handleToggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await document.documentElement.requestFullscreen();
+    } catch (err) {
+      console.warn("Fullscreen request blocked or failed:", err);
+      showToast("Fullscreen could not be changed.");
+    }
   };
 
   // Theme map helper definitions
@@ -835,7 +770,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     }
   };
 
-  if (loading && !chapterContent) {
+  if (!settingsReady || (loading && !chapterContent)) {
     return (
       <div className="w-full h-screen flex flex-col items-center justify-center bg-white dark:bg-black text-black dark:text-white" id="read-loader">
         <p className="text-[10px] font-sans uppercase tracking-widest font-bold animate-pulse">Opening reader workspace...</p>
@@ -861,10 +796,9 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
 
   const themeStyle = getThemeClass(settings.theme);
   const activeChapter = chapters[currentChapterIdx];
-  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
-  const visiblePageCount = settings.viewMode === "split" && !isMobile ? 2 : 1;
-  const viewportMaxWidth = settings.contentWidth * visiblePageCount + (visiblePageCount - 1) * COLUMN_GAP;
-  const viewportWidthStr = isMobile
+  const visiblePageCount = settings.viewMode === "split" && !layout.isNarrowViewport ? 2 : 1;
+  const viewportMaxWidth = settings.contentWidth * visiblePageCount + (visiblePageCount - 1) * READER_COLUMN_GAP;
+  const viewportWidthStr = layout.isNarrowViewport
     ? `min(calc(100vw - 32px), ${settings.contentWidth}px)`
     : `min(calc(100vw - 96px), ${viewportMaxWidth}px)`;
   const viewportTopClass = isFullscreen ? "top-6" : "top-16";
@@ -877,11 +811,24 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       bookTitle={parsedBook?.title}
       activeChapterTitle={activeChapter?.title}
       showSettings={showTypography}
+      isFullscreen={isFullscreen}
       onMouseMove={handleMouseMove}
-      onClick={handleGlobalClick}
-      onBackToLibrary={onBackToLibrary}
+      onBackToLibrary={handleBackToLibrary}
       onSummarizeChapter={handleSummarizeChapter}
-      onToggleSettings={() => setShowTypography(!showTypography)}
+      onToggleSettings={() => {
+        setShowVocabulary(false);
+        setShowTypography(!showTypography);
+      }}
+      onToggleFullscreen={handleToggleFullscreen}
+      showVocabulary={showVocabulary}
+      onToggleVocabulary={() => {
+        if (!showVocabulary) {
+          setShowTypography(false);
+          cancelAIRequest();
+          setAiState((prev) => ({ ...prev, visible: false }));
+        }
+        setShowVocabulary((visible) => !visible);
+      }}
     >
       <ReaderSettingsPanel
         visible={showTypography}
@@ -890,15 +837,26 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         onClose={() => setShowTypography(false)}
       />
 
+      {showVocabulary && (
+        <VocabularyPanel
+          words={savedWords}
+          onClose={() => setShowVocabulary(false)}
+          onDelete={handleDeleteSavedWord}
+        />
+      )}
+
       {/* 3. AI Side Popover */}
-      {aiState.visible && (
+      {aiState.visible && !showVocabulary && (
         <AIResponsePopover
           type={aiState.type}
           inputText={aiState.inputText}
           result={aiState.result}
           loading={aiState.loading}
           error={aiState.error}
-          onClose={() => setAiState((prev) => ({ ...prev, visible: false }))}
+          onClose={() => {
+            cancelAIRequest();
+            setAiState((prev) => ({ ...prev, visible: false }));
+          }}
           onRetry={() => {
             if (aiState.type === "summarize") handleSummarizeChapter();
             else handleSelectionAction(aiState.type, undefined, aiState.inputText);
@@ -907,42 +865,40 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       )}
 
       {/* 4. Selection Floating Menu Overlay */}
-      <SelectionMenu
-        onAction={handleSelectionAction}
-        onClose={() => {}}
-      />
+      {!showVocabulary && <SelectionMenu onAction={handleSelectionAction} onClose={() => {}} />}
       {/* 5. Clean Reader Column stage */}
       <div
-        ref={containerRef}
+        ref={layout.containerRef}
         id="reader-scroll-viewport"
         style={{
           width: viewportWidthStr,
         }}
-        className={`absolute left-1/2 -translate-x-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar transition-all duration-300 ${viewportTopClass} ${viewportBottomClass}`}
+        className={`absolute left-1/2 -translate-x-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar ${viewportTopClass} ${viewportBottomClass}`}
       >
         <div
           style={{
             width: "100%",
             maxWidth: "100%",
-            transform: `translate3d(-${chapterPageIndex * (viewportWidth + COLUMN_GAP)}px, 0, 0)`,
-            transition: suppressAnimation 
+            transform: `translate3d(-${layout.unitIndex * layout.unitStride}px, 0, 0)`,
+            transition: layout.suppressAnimation
               ? "opacity 0.15s ease-in-out" 
               : "transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease-in-out",
-            opacity: (loading || !layoutSettled) ? 0 : 1,
+            opacity: (loading || !layout.layoutSettled) ? 0 : 1,
           }}
           className="mx-auto px-0 h-full py-2 relative"
           id="reader-column"
         >
           {/* Core Chapter HTML body render (Premium custom typographies binding) */}
           <div
+            ref={layout.contentRef}
             id="reader-chapter-body"
-            onClick={handleChapterClick}
+        onClick={handleChapterClick}
             style={{
               fontSize: `${settings.fontSize}px`,
               lineHeight: settings.lineHeight,
               fontFamily: settings.fontFamily === "Source Serif" ? "'Source Serif 4', Georgia, serif" : `'${settings.fontFamily}', Georgia, serif`,
               columnCount: visiblePageCount,
-              columnGap: `${COLUMN_GAP}px`,
+              columnGap: `${READER_COLUMN_GAP}px`,
               height: "100%",
               columnFill: "auto",
             }}
@@ -972,7 +928,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         <span className="hidden md:block">→</span>
       </div>
 
-      {chapters.length > 1 && !showTypography && !aiState.visible && (
+      {chapters.length > 1 && !showTypography && !aiState.visible && !showVocabulary && (
         <ChapterRail
           chapters={chapters}
           currentChapterIndex={currentChapterIdx}
@@ -986,11 +942,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
             setShowChapterBarPanel(false);
           }}
           onShowChapterPanel={() => setShowChapterBarPanel(true)}
-          onSelectChapter={(idx) => {
-            setSuppressAnimation(true);
-            setPendingPageAction("first");
-            setCurrentChapterIdx(idx);
-          }}
+          onSelectChapter={(idx) => navigateToChapter(idx, "first")}
         />
       )}
 
@@ -998,8 +950,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         hudVisible={hudVisible}
         footerClassName={themeStyle.footer}
         currentChapterIndex={currentChapterIdx}
-        currentPageIndex={chapterPageIndex}
-        totalPages={totalChapterPages}
+        currentPageIndex={layout.unitIndex}
+        totalPages={layout.unitCount}
         totalChapters={chapters.length}
         progressPercent={currentBookMeta?.progress?.scrollPercent || 0}
         onPreviousPage={handlePrevPage}

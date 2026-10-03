@@ -28,7 +28,7 @@ export default function AIResponsePopover({
   onRetry,
 }: AIResponsePopoverProps) {
   return (
-    <div id="ai-response-popover" className="fixed top-6 right-6 z-50 w-full max-w-sm rounded-sm shadow-2xl border border-black/10 dark:border-white/10 bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md overflow-hidden animate-in slide-in-from-right duration-250 flex flex-col max-h-[88vh] text-black dark:text-white">
+    <div id="ai-response-popover" role="region" aria-label="AI response" className="fixed top-6 right-4 sm:right-6 z-50 w-[min(24rem,calc(100vw-2rem))] rounded-sm shadow-2xl border border-black/10 dark:border-white/10 bg-white/95 dark:bg-neutral-900/95 backdrop-blur-md overflow-hidden animate-in slide-in-from-right duration-250 flex flex-col max-h-[88vh] text-black dark:text-white">
       {/* Popover Header */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-black/5 dark:border-white/5" id="ai-pop-hdr">
         <div className="flex items-center gap-3">

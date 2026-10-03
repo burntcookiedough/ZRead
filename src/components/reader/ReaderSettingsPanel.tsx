@@ -18,7 +18,7 @@ export default function ReaderSettingsPanel({ visible, settings, onChange, onClo
 
   return (
     <div
-      className="absolute top-[4.5rem] right-6 z-50 w-[min(24rem,calc(100vw-3rem))] animate-in fade-in zoom-in-95 duration-150"
+      className="absolute top-[4.5rem] right-4 sm:right-6 z-50 w-[min(24rem,calc(100vw-2rem))] max-h-[calc(100dvh-6rem)] overflow-y-auto animate-in fade-in zoom-in-95 duration-150"
       id="typo-panel-sec"
     >
       <TypographyPanel settings={settings} onChange={onChange} onClose={onClose} />
