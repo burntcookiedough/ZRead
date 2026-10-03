@@ -72,6 +72,19 @@ function legacySnapshot(): LegacyStorageSnapshot {
   };
 }
 
+test("older SQLite settings retain saved values and fill missing reader fields", async () => {
+  const { db, close } = createInMemoryDatabase();
+  try {
+    await initializeDesktopSchema(db);
+    await db.execute("INSERT INTO zread_reader_settings (id, payload) VALUES (1, $1)", [JSON.stringify({ theme: "light", fontSize: 22 })]);
+    assert.deepEqual(await createDesktopSqliteStorage(db).getReaderSettings(), {
+      ...DEFAULT_READER_SETTINGS, theme: "light", fontSize: 22,
+    });
+  } finally {
+    close();
+  }
+});
+
 test("legacy migration is idempotent, persists all records, and cascades deletion", async () => {
   const { db, close } = createInMemoryDatabase();
   try {

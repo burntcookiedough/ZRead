@@ -112,11 +112,13 @@ async function deleteBook(bookId: string): Promise<void> {
   const hadAppOwnedFile = await hasAppOwnedBookFile(bookId);
   const previousFile = hadAppOwnedFile ? await getBookFile(bookId) : null;
   let sqliteDeleted = false;
+  let fileDeletionStarted = false;
   try {
-    await deleteAppOwnedBookFile(bookId);
     await desktopSqliteStorage.deleteBook(bookId);
     sqliteDeleted = true;
     await indexedDbStorage.deleteBook(bookId);
+    fileDeletionStarted = true;
+    await deleteAppOwnedBookFile(bookId);
   } catch (error) {
     const rollbackErrors: unknown[] = [];
     if (sqliteDeleted && previousBook) {
@@ -128,9 +130,9 @@ async function deleteBook(bookId: string): Promise<void> {
         rollbackErrors.push(rollbackError);
       }
     }
-    if (hadAppOwnedFile && previousFile) {
+    if (fileDeletionStarted && hadAppOwnedFile && previousFile) {
       try {
-        await saveBookFile(bookId, previousFile);
+        if (!await hasAppOwnedBookFile(bookId)) await saveBookFile(bookId, previousFile);
       } catch (restoreError) {
         rollbackErrors.push(restoreError);
       }

@@ -137,7 +137,9 @@ export function createDesktopSqliteStorage(db: DesktopSqlDatabase): Pick<BookSto
 
     async getReaderSettings() {
       const rows = await db.select<JsonRow[]>("SELECT payload FROM zread_reader_settings WHERE id = 1");
-      return rows.length ? JSON.parse(rows[0].payload) as ReaderSettings : { ...DEFAULT_READER_SETTINGS };
+      return rows.length
+        ? { ...DEFAULT_READER_SETTINGS, ...JSON.parse(rows[0].payload) as Partial<ReaderSettings> }
+        : { ...DEFAULT_READER_SETTINGS };
     },
 
     async saveReaderSettings(settings) {

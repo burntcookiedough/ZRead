@@ -211,7 +211,9 @@ Let the book title be "${bookTitle || 'Unknown'}".`;
 
   } catch (error) {
     console.error("Gemini server action error:", error);
-    res.status(500).json({ error: error instanceof Error ? error.message : "An error occurred with the AI assistant." });
+    res.status(500).json({
+      error: "The AI request failed. Check the adapter's provider configuration and network connection, then try again.",
+    });
   }
 });
 
@@ -242,6 +244,10 @@ function normalizeOrigin(value: string): string {
   throw new Error(`ZREAD_ALLOWED_ORIGINS supports only tauri, http, or https origins: ${value}`);
 }
 
+function isLoopbackHost(host: string): boolean {
+  return ["127.0.0.1", "::1", "localhost"].includes(host.trim().toLowerCase().replace(/^\[|\]$/g, ""));
+}
+
 // Setup Vite Dev Server / Static production serves
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
@@ -259,6 +265,11 @@ async function startServer() {
   }
 
   app.listen(PORT, HOST, () => {
+    if (!isLoopbackHost(HOST)) {
+      console.warn(
+        `WARNING: ZREAD_HOST=${HOST} is nonloopback. Requests are unauthenticated, and clients without an Origin header can use the configured provider quota.`,
+      );
+    }
     console.log(`Server running on http://${HOST}:${PORT}`);
   });
 }
