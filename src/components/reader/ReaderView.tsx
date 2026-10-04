@@ -447,6 +447,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
               lineHeight: settingsValue.lineHeight,
               fontFamily: settingsValue.fontFamily === "Source Serif" ? "'Source Serif 4', Georgia, serif" : `'${settingsValue.fontFamily}', Georgia, serif`,
               columnCount: visiblePageCount,
+              columnWidth: visiblePageCount === 1 ? viewportWidth : "auto",
               columnGap: `${READER_COLUMN_GAP}px`,
               height: "100%",
               columnFill: "auto",
