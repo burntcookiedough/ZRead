@@ -65,9 +65,8 @@ export function useReaderBook(bookId: string) {
           setError(err instanceof Error && err.message
             ? err.message
             : "An issue occurred while loading this EPUB reader engine.");
+          setLoading(false);
         }
-      } finally {
-        if (active) setLoading(false);
       }
     };
 
