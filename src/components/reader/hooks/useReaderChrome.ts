@@ -139,7 +139,7 @@ export function useReaderChrome(hasBlockingOverlay: boolean) {
           .catch(() => {})
           .then(async () => {
             if (mountedRef.current) return;
-            const fullscreen = await appWindow.isFullscreen();
+            const fullscreen = await appWindow.isFullscreen().catch(() => true);
             if (!mountedRef.current && fullscreen) await appWindow.setFullscreen(false);
           })
           .catch((error) => console.warn("Could not exit native fullscreen:", error));
