@@ -201,6 +201,14 @@ export async function loadChapterContent(
         try {
           const blob = await imgFile.async("blob");
           const localUrl = URL.createObjectURL(blob);
+
+          try {
+            onImageResolved?.(localUrl);
+          } catch (error) {
+            URL.revokeObjectURL(localUrl);
+            throw error;
+          }
+
           if (img.tagName.toLowerCase() === "img") {
             img.setAttribute("src", localUrl);
           } else {
@@ -209,12 +217,8 @@ export async function loadChapterContent(
           }
           
           // Add custom elegant sizing and styles to inline content assets
-          img.className = "max-w-full h-auto mx-auto my-6 rounded shadow-sm opacity-90 transition-opacity hover:opacity-100";
+          img.setAttribute("class", "max-w-full h-auto mx-auto my-6 rounded shadow-sm opacity-90 transition-opacity hover:opacity-100");
           img.setAttribute("referrerpolicy", "no-referrer");
-          
-          if (onImageResolved) {
-            onImageResolved(localUrl);
-          }
         } catch (e) {
           console.error("Failed to inline chapter inline asset:", imgZipPath, e);
         }
