@@ -32,9 +32,11 @@ export function useLibrary(onBookSelect: (bookId: string) => void) {
       setLoading(true);
       setBooks(await storage.getAllBooks());
       setUploadError(null);
+      return true;
     } catch (error) {
       console.error("Failed to load local books:", error);
       setUploadError("Could not load your library. Your reading data has not been deleted. Try reopening the app.");
+      return false;
     } finally {
       setLoading(false);
     }
@@ -65,8 +67,7 @@ export function useLibrary(onBookSelect: (bookId: string) => void) {
       throw error;
     }
 
-    await refreshBooks();
-    onBookSelect(bookId);
+    if (await refreshBooks()) onBookSelect(bookId);
   }, [onBookSelect, refreshBooks]);
 
   const importBrowserFile = useCallback(async (file: File | undefined) => {
