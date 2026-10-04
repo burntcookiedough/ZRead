@@ -3,240 +3,65 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef } from "react";
-import { Book } from "../../types";
+import { useEffect, useRef } from "react";
 import { isTauriRuntime } from "@/app/runtime";
-import { storage } from "@/features/storage";
-import { parseEpub } from "../../utils/epubParser";
-import BackupPanel from "../../features/backup/BackupPanel";
-import AISettings from "../../features/ai/AISettings";
-import { version } from "../../../package.json";
+import BookCard from "./BookCard";
+import LibrarySettingsDialog from "./LibrarySettingsDialog";
+import { useLibrary } from "./useLibrary";
 
 interface LibraryViewProps {
   onBookSelect: (bookId: string) => void;
 }
 
 export default function LibraryView({ onBookSelect }: LibraryViewProps) {
-  const [books, setBooks] = useState<Book[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [dragActive, setDragActive] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
-  const [bookToDelete, setBookToDelete] = useState<Book | null>(null);
-  
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const nativeImportBusy = useRef(false);
+  const {
+    state,
+    fileInputRef,
+    actions: {
+      refreshBooks,
+      handleDrag,
+      handleDrop,
+      handleFileInputChange,
+      triggerFileBrowser,
+      requestDelete,
+      cancelDelete,
+      confirmDelete,
+    },
+  } = useLibrary(onBookSelect);
+  const deleteDialogRef = useRef<HTMLDialogElement>(null);
 
-  // Fetch all books on mount
   useEffect(() => {
-    loadBooks();
-  }, []);
+    const dialog = deleteDialogRef.current;
+    if (!dialog) return;
+    if (state.bookToDelete && !dialog.open) dialog.showModal();
+    else if (!state.bookToDelete && dialog.open) dialog.close();
+  }, [state.bookToDelete]);
 
-  useEffect(() => {
-    if (!isTauriRuntime) return;
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    void import("@tauri-apps/api/webview").then(async ({ getCurrentWebview }) => {
-      const cleanup = await getCurrentWebview().onDragDropEvent(async event => {
-        if (disposed) return;
-        setDragActive(event.payload.type === "over" || event.payload.type === "enter");
-        if (event.payload.type !== "drop" || nativeImportBusy.current) return;
-        const path = event.payload.paths[0];
-        if (!path) return;
-        nativeImportBusy.current = true;
-        setIsUploading(true);
-        setUploadError(null);
-        try {
-          if (!isEpubFileName(path)) throw new Error("Please drop an EPUB file.");
-          const { readFile } = await import("@tauri-apps/plugin-fs");
-          const bytes = await readFile(path);
-          await importEpubFromBuffer(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), getFileNameFromPath(path));
-        } catch (error) {
-          setUploadError(error instanceof Error ? error.message : "Could not import this EPUB.");
-        } finally {
-          nativeImportBusy.current = false;
-          setIsUploading(false);
-        }
-      });
-      if (disposed) cleanup(); else unlisten = cleanup;
-    }).catch(() => setUploadError("Native file drop is unavailable. Use Import Document to choose an EPUB."));
-    return () => { disposed = true; unlisten?.(); };
-  }, []);
-
-  const loadBooks = async () => {
-    try {
-      setLoading(true);
-      const all = await storage.getAllBooks();
-      setBooks(all);
-    } catch (e) {
-      console.error("Failed to load local books:", e);
-      setUploadError("Could not load your library. Your reading data has not been deleted. Try reopening the app.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDrag = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.type === "dragenter" || e.type === "dragover") {
-      setDragActive(true);
-    } else if (e.type === "dragleave") {
-      setDragActive(false);
-    }
-  };
-
-  const importEpubFromBuffer = async (arrayBuffer: ArrayBuffer, fileName: string) => {
-    const parsed = await parseEpub(arrayBuffer);
-    const bookId = `book_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-    const newBook: Book = {
-      id: bookId,
-      title: parsed.title,
-      author: parsed.author,
-      fileName,
-      createdAt: new Date().toISOString(),
-      lastOpenedAt: new Date().toISOString(),
-      progress: {
-        chapterIndex: 0,
-        scrollPercent: 0,
-      },
-    };
-
-    await storage.saveBookFile(bookId, arrayBuffer);
-    try {
-      await storage.saveBookMetadata(newBook);
-    } catch (err) {
-      await storage.deleteBookFile(bookId);
-      throw err;
-    }
-    await loadBooks();
-    onBookSelect(bookId);
-  };
-
-  const validateAndProcessFile = async (file: File) => {
-    if (!file) return;
-
-    if (!isEpubFileName(file.name) && file.type !== "application/epub+zip") {
-      setUploadError("This reader currently only supports standard EPUB files. Please select a valid document.");
-      return;
-    }
-
-    setUploadError(null);
-    setIsUploading(true);
-
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      await importEpubFromBuffer(arrayBuffer, file.name);
-    } catch (err: any) {
-      console.error("EPUB upload parsing error:", err);
-      setUploadError(err.message || "Could not successfully parse or save this book. The EPUB container might be corrupted.");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const isEpubFileName = (fileName: string) => fileName.toLowerCase().endsWith(".epub");
-
-  const getFileNameFromPath = (path: string) => {
-    return path.split(/[\\/]/).pop() || "Imported EPUB";
-  };
-
-  const importFromNativePicker = async () => {
-    setUploadError(null);
-
-    try {
-      const [{ open }, { readFile }] = await Promise.all([
-        import("@tauri-apps/plugin-dialog"),
-        import("@tauri-apps/plugin-fs"),
-      ]);
-      const selectedPath = await open({
-        multiple: false,
-        directory: false,
-        title: "Import EPUB",
-        filters: [{ name: "EPUB", extensions: ["epub"] }],
-      });
-
-      if (!selectedPath) return;
-
-      const fileName = getFileNameFromPath(selectedPath);
-      if (!isEpubFileName(fileName)) {
-        setUploadError("This reader currently only supports standard EPUB files. Please select a .epub document.");
-        return;
-      }
-
-      setIsUploading(true);
-      const fileBytes = await readFile(selectedPath);
-      await importEpubFromBuffer(fileBytes.buffer.slice(fileBytes.byteOffset, fileBytes.byteOffset + fileBytes.byteLength), fileName);
-    } catch (err: any) {
-      console.error("Native EPUB import failed:", err);
-      setUploadError(err.message || "Could not successfully import this EPUB from the desktop file picker.");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const handleDrop = async (e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
-
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      await validateAndProcessFile(e.dataTransfer.files[0]);
-    }
-  };
-
-  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      await validateAndProcessFile(e.target.files[0]);
-    }
-  };
-
-  const triggerFileBrowser = () => {
-    if (isTauriRuntime) {
-      void importFromNativePicker();
-      return;
-    }
-    fileInputRef.current?.click();
-  };
-
-  const handleDeleteBook = (e: React.MouseEvent, book: Book) => {
-    e.stopPropagation(); // Prevent card click opening triggers
-    setBookToDelete(book);
-  };
-
-  const formatDateLabel = (isoStr: string) => {
-    const d = new Date(isoStr);
-    return d.toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  };
   const localStorageDescription = isTauriRuntime
-    ? "Documents are copied into the desktop app data directory and kept local to this device."
-    : "Documents are processed locally in the development browser runtime's IndexedDB sandbox database.";
+    ? "Imported EPUBs are copied into this app's local data folder."
+    : "EPUBs stay in this browser's local IndexedDB library.";
 
   return (
-    <div className="w-full max-w-5xl mx-auto px-6 py-12 md:py-16 text-black dark:text-white min-h-screen flex flex-col justify-start" id="lib-root">
-      <div>
-        {/* Top Header Branding Row */}
-        <div className="flex flex-col sm:flex-row sm:items-baseline justify-between mb-10 border-b border-black/10 dark:border-white/10 pb-6 gap-4" id="lib-header">
-          <div>
-            <h1 className="font-serif font-bold text-3xl tracking-tight text-black dark:text-white leading-none mb-1">
-              The Bookshelf
-            </h1>
-            <p className="font-sans text-[9px] text-black/50 dark:text-white/50 uppercase tracking-[0.25em] font-bold">
-              PERSONAL LITERARY ARCHIVE
-            </p>
-          </div>
+    <main className="mx-auto flex min-h-screen w-full max-w-5xl flex-col px-6 py-10 text-black dark:text-white" id="lib-root">
+      <header className="mb-10 flex flex-col gap-5 border-b border-black/10 pb-6 dark:border-white/10 sm:flex-row sm:items-end sm:justify-between" id="lib-header">
+        <div>
+          <p className="mb-2 font-sans text-[10px] font-bold uppercase tracking-[0.18em] text-black/50 dark:text-white/50">Your local library</p>
+          <h1 className="font-serif text-3xl font-semibold leading-tight tracking-tight text-black dark:text-white">The Bookshelf</h1>
+          <p className="mt-2 max-w-md font-sans text-sm leading-relaxed text-black/60 dark:text-white/60">
+            Pick up where you left off. Your books stay on this device.
+          </p>
+        </div>
 
+        <div className="flex flex-wrap items-center gap-2">
+          <LibrarySettingsDialog onRestore={() => void refreshBooks()} />
           <button
+            type="button"
             onClick={triggerFileBrowser}
-            disabled={isUploading}
+            disabled={state.isUploading}
             id="btn-upload-nav"
-            className="px-4 py-2 rounded-sm border border-black dark:border-white bg-black dark:bg-white text-white dark:text-black text-[9px] uppercase tracking-[0.15em] font-sans font-bold hover:bg-transparent hover:text-black dark:hover:bg-transparent dark:hover:text-white transition-all cursor-pointer"
+            className="rounded-sm border border-black bg-black px-4 py-2 font-sans text-[10px] font-bold uppercase tracking-[0.14em] text-white hover:bg-transparent hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black disabled:cursor-wait disabled:opacity-50 dark:border-white dark:bg-white dark:text-black dark:hover:bg-transparent dark:hover:text-white dark:focus-visible:outline-white"
           >
-            Import Document
+            Import EPUB
           </button>
           <input
             ref={fileInputRef}
@@ -247,162 +72,110 @@ export default function LibraryView({ onBookSelect }: LibraryViewProps) {
             id="file-hidden-input"
           />
         </div>
+      </header>
 
-        {uploadError && (
-          <div className="mb-6 p-4 rounded-sm border border-black dark:border-white bg-black/5 dark:bg-white/5 text-black dark:text-white text-xs tracking-wider uppercase font-sans flex flex-col gap-1" id="upload-err">
-            <span className="font-bold">Import failed</span>
-            <span className="opacity-80 normal-case">{uploadError}</span>
-          </div>
-        )}
+      {state.uploadError && (
+        <div role="alert" className="mb-6 rounded-sm border border-black/20 bg-black/[0.03] px-4 py-3 text-sm dark:border-white/20 dark:bg-white/[0.04]" id="upload-err">
+          <p className="font-semibold">Library update failed</p>
+          <p className="mt-1 text-black/70 dark:text-white/70">{state.uploadError}</p>
+        </div>
+      )}
 
-        {/* Dynamic upload loader */}
-        {isUploading && (
-          <div className="mb-6 p-4 rounded-sm border border-black dark:border-white bg-black/5 dark:bg-white/5 text-black dark:text-white text-xs font-sans animate-pulse" id="upload-spinner">
-            <p className="font-bold uppercase tracking-widest text-[9px]">Parsing EPUB container...</p>
-            <p className="opacity-80 font-normal">Extracting spine elements and parsing headings</p>
-          </div>
-        )}
+      {state.isUploading && (
+        <div role="status" className="mb-6 rounded-sm border border-black/15 px-4 py-3 font-sans text-sm dark:border-white/15" id="upload-spinner">
+          <p className="font-semibold">Importing EPUB…</p>
+          <p className="mt-1 text-black/60 dark:text-white/60">Reading the book and adding a local copy.</p>
+        </div>
+      )}
 
-        {/* Dynamic list rendering */}
-        {loading ? (
-          <div className="text-center py-16 text-black dark:text-white animate-pulse" id="lib-loading-anim">
-            <p className="text-[9px] uppercase tracking-[0.2em] font-sans font-bold">Accessing library database...</p>
-          </div>
-        ) : books.length === 0 ? (
-          /* Empty Library State with Dropzone */
-          <div
+      {state.loading ? (
+        <div role="status" className="py-16 text-center font-sans text-xs text-black/55 dark:text-white/55" id="lib-loading-anim">
+          Opening your library…
+        </div>
+      ) : state.books.length === 0 ? (
+        <section className="flex flex-1 flex-col items-center justify-center py-12 text-center" aria-labelledby="empty-library-title">
+          <h2 id="empty-library-title" className="font-serif text-2xl font-medium text-black dark:text-white">A quiet place for your books</h2>
+          <p className="mt-2 max-w-md font-sans text-sm leading-relaxed text-black/60 dark:text-white/60">
+            Choose an EPUB to add it to your bookshelf, or drop one here.
+          </p>
+          <button
+            type="button"
+            onClick={triggerFileBrowser}
             onDragEnter={handleDrag}
             onDragOver={handleDrag}
             onDragLeave={handleDrag}
-            onDrop={handleDrop}
-            onClick={triggerFileBrowser}
+            onDrop={(event) => void handleDrop(event)}
+            disabled={state.isUploading}
             id="lib-dropzone"
-            className={`p-12 md:p-16 text-center rounded-sm border border-dashed flex flex-col items-center justify-center cursor-pointer transition-all ${
-              dragActive
-                ? "border-black dark:border-white bg-black/5 dark:bg-white/5"
-                : "border-black/25 dark:border-white/25 bg-transparent hover:border-black dark:hover:border-white"
-            }`}
+            className={`mt-8 flex min-h-44 w-full max-w-xl flex-col items-center justify-center rounded-sm border border-dashed px-6 py-10 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black dark:focus-visible:outline-white disabled:cursor-wait ${state.dragActive ? "border-black bg-black/[0.04] dark:border-white dark:bg-white/[0.05]" : "border-black/25 hover:border-black dark:border-white/25 dark:hover:border-white"}`}
           >
-            <h3 className="font-serif italic text-2xl text-black dark:text-white mb-2 font-medium">Drop an EPUB to start reading</h3>
-            <p className="font-sans text-[11px] tracking-wider text-black/60 dark:text-white/60 max-w-sm leading-relaxed mb-6">
-              {localStorageDescription}
-            </p>
-            <span className="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-sm text-[9px] uppercase tracking-[0.2em] font-bold hover:bg-white hover:text-black dark:hover:bg-black dark:hover:text-white border border-black dark:border-white transition-all">
-              Select Book File
-            </span>
-          </div>
-        ) : (
-          /* Book lists Cards Grid */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="lib-books-grid">
-            {books.map((book) => {
-              const formattedProgress = book.progress ? Math.round(book.progress.scrollPercent || 0) : 0;
-              return (
-                <div
-                  key={book.id}
-                  id={`book-card-${book.id}`}
-                  onClick={() => onBookSelect(book.id)}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Read ${book.title}`}
-                  onKeyDown={e => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onBookSelect(book.id); } }}
-                  className="group relative flex flex-col justify-between p-5 rounded-sm border border-black/10 dark:border-white/10 bg-transparent transition-all hover:bg-black/[0.02] dark:hover:bg-white/[0.02] hover:border-black dark:hover:border-white cursor-pointer"
-                >
-                  {/* Card top */}
-                  <div className="space-y-2">
-                    <h3 className="font-serif font-medium text-xl text-black dark:text-white leading-tight italic tracking-tight">
-                      {book.title}
-                    </h3>
-                    <p className="font-sans text-[9px] text-black/60 dark:text-white/60 uppercase tracking-[0.15em] font-bold truncate">
-                      {book.author}
-                    </p>
-                  </div>
-
-                  {/* Card bottom footer detail */}
-                  <div className="mt-6 pt-4 border-t border-black/5 dark:border-white/5 space-y-4">
-                    {/* Progress slider bar representation */}
-                    <div className="space-y-1.5" id={`progress-sec-${book.id}`}>
-                      <div className="flex items-center justify-between text-[9px] font-sans font-bold uppercase tracking-widest text-black/50 dark:text-white/50">
-                        <span>Progress</span>
-                        <span>{formattedProgress}%</span>
-                      </div>
-                      <div className="w-full h-[1px] bg-black/10 dark:bg-white/10 overflow-hidden">
-                        <div
-                          className="h-full bg-black dark:bg-white transition-all duration-300"
-                          style={{ width: `${formattedProgress}%` }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Metadata indicators */}
-                    <div className="flex items-center justify-between text-[8px] font-sans uppercase tracking-widest text-black/50 dark:text-white/50 select-none">
-                      <span>
-                        Opened: {formatDateLabel(book.lastOpenedAt)}
-                      </span>
-                      <button
-                        onClick={(e) => handleDeleteBook(e, book)}
-                        id={`btn-del-book-${book.id}`}
-                        title="Remove book"
-                        className="px-2 py-0.5 rounded-sm border border-black/10 dark:border-white/10 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white transition-all cursor-pointer font-bold text-[8px] uppercase tracking-wider bg-transparent"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <BackupPanel onRestore={() => { void loadBooks(); }} />
-      <AISettings />
-      <details className="mt-6 text-xs border-t border-black/10 dark:border-white/10 pt-4">
-        <summary className="cursor-pointer">About ZRead</summary>
-        <p className="mt-2">ZRead {version} · {navigator.userAgent.includes("Windows") ? "Windows" : navigator.userAgent.includes("Linux") ? "Linux" : "Browser preview"}</p>
-        <p className="mt-2 opacity-70">Books and reading data stay on this device. No account or sync is required. Text is sent to your configured AI service only when you request a definition, explanation or chapter summary.</p>
-      </details>
-
-      {/* Custom delete validation modal */}
-      {bookToDelete && (
-        <div id="delete-confirm-modal" className="fixed inset-0 bg-black/70 backdrop-blur-xs z-50 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm bg-white dark:bg-neutral-900 p-6 rounded-sm border border-black dark:border-white shadow-2xl animate-in zoom-in-95 duration-150 text-black dark:text-white">
-            <h4 className="font-sans font-bold text-[9px] uppercase tracking-[0.2em] text-black/60 dark:text-white/60 mb-3">Delete Book Confirmation</h4>
-            <h3 className="font-serif font-semibold text-base text-black dark:text-white italic leading-snug mb-2">
-              "{bookToDelete.title}"
-            </h3>
-            <p className="font-sans text-xs text-black/70 dark:text-white/70 leading-relaxed mb-6">
-              Are you sure you want to remove this book? This will permanently delete the text, all highlights, progress, and saved vocabulary local records.
-            </p>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={() => setBookToDelete(null)}
-                id="btn-delete-cancel"
-                className="flex-1 py-2 rounded-sm border border-black/20 dark:border-white/20 text-[9px] uppercase tracking-[0.15em] font-sans font-bold text-black/60 dark:text-white/60 hover:bg-black/5 dark:hover:bg-white/5 transition-all cursor-pointer"
-              >
-                Keep Book
-              </button>
-              <button
-                onClick={async () => {
-                  const targetId = bookToDelete.id;
-                  setBookToDelete(null);
-                  try {
-                    await storage.deleteBook(targetId);
-                    setBooks((prev) => prev.filter((b) => b.id !== targetId));
-                  } catch (err) {
-                    console.error("Delete book failed:", err);
-                    setUploadError("Could not remove this book. Your library was kept; try again.");
-                  }
-                }}
-                id="btn-delete-confirm"
-                className="flex-1 py-2 rounded-sm bg-black dark:bg-white text-white dark:text-black text-[9px] uppercase tracking-[0.15em] font-sans font-bold hover:bg-white hover:text-black dark:hover:bg-black dark:hover:text-white border border-black dark:border-white transition-all cursor-pointer"
-              >
-                Delete
-              </button>
+            <span className="font-sans text-sm font-semibold">Drop an EPUB to import</span>
+            <span className="mt-1 font-sans text-xs text-black/55 dark:text-white/55">or choose a file</span>
+          </button>
+          <p className="mt-4 max-w-lg font-sans text-xs leading-relaxed text-black/50 dark:text-white/50">{localStorageDescription}</p>
+        </section>
+      ) : (
+        <div className="space-y-10">
+          <section aria-labelledby="continue-reading-title">
+            <div className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
+              <h2 id="continue-reading-title" className="font-serif text-xl font-semibold">Continue reading</h2>
+              <p className="font-sans text-xs text-black/50 dark:text-white/50">Most recently opened</p>
             </div>
-          </div>
+            <BookCard book={state.books[0]} isContinue onOpen={onBookSelect} onDelete={requestDelete} />
+          </section>
+
+          {state.books.length > 1 && (
+            <section aria-labelledby="your-books-title">
+              <h2 id="your-books-title" className="mb-4 font-serif text-xl font-semibold">Your books</h2>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3" id="lib-books-grid">
+                {state.books.slice(1).map((book) => (
+                  <div key={book.id} className="contents">
+                    <BookCard book={book} isContinue={false} onOpen={onBookSelect} onDelete={requestDelete} />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
       )}
-    </div>
+
+      <dialog
+        ref={deleteDialogRef}
+        id="delete-confirm-modal"
+        aria-labelledby="delete-confirm-title"
+        aria-describedby="delete-confirm-description"
+        onClose={cancelDelete}
+        className="m-auto w-[min(28rem,calc(100vw-2rem))] max-w-none border border-black/20 bg-white p-6 text-black shadow-2xl backdrop:bg-black/65 dark:border-white/20 dark:bg-neutral-900 dark:text-white dark:backdrop:bg-black/75"
+      >
+        {state.bookToDelete && (
+          <>
+            <h2 id="delete-confirm-title" className="font-sans text-xs font-bold uppercase tracking-[0.15em]">Remove this book?</h2>
+            <p className="mt-3 font-serif text-lg italic">{state.bookToDelete.title}</p>
+            <p id="delete-confirm-description" className="mt-3 text-sm leading-relaxed text-black/65 dark:text-white/65">
+              This removes the local EPUB copy, reading progress, highlights, and saved vocabulary for this book.
+            </p>
+            <div className="mt-6 flex justify-end gap-2">
+              <button
+                type="button"
+                autoFocus
+                onClick={cancelDelete}
+                id="btn-delete-cancel"
+                className="rounded-sm border border-black/20 px-4 py-2 font-sans text-[10px] font-bold uppercase tracking-wider text-black/70 hover:bg-black/5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-black dark:border-white/20 dark:text-white/70 dark:hover:bg-white/10 dark:focus-visible:outline-white"
+              >
+                Keep book
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDelete()}
+                id="btn-delete-confirm"
+                className="rounded-sm border border-black bg-black px-4 py-2 font-sans text-[10px] font-bold uppercase tracking-wider text-white hover:bg-transparent hover:text-black focus-visible:outline focus-visible:outline-2 focus-visible:outline-black dark:border-white dark:bg-white dark:text-black dark:hover:bg-transparent dark:hover:text-white dark:focus-visible:outline-white"
+              >
+                Remove book
+              </button>
+            </div>
+          </>
+        )}
+      </dialog>
+    </main>
   );
 }
