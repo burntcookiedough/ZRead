@@ -148,6 +148,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     book.parsedBook?.title,
     annotations.highlights,
   ]);
+  const renderedChapterContent = useMemo(() => ({ __html: renderedChapterHtml }), [renderedChapterHtml]);
 
   const navigateToChapter = useCallback((target: number, position: ReaderPositionAction) => {
     if (!book.chapters.length) return;
@@ -449,7 +450,7 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
               columnFill: "auto",
             }}
             className="epub-content select-text font-serif leading-relaxed text-left antialiased focus:outline-none h-full"
-            dangerouslySetInnerHTML={{ __html: renderedChapterHtml }}
+            dangerouslySetInnerHTML={renderedChapterContent}
           />
         </div>
       </div>
