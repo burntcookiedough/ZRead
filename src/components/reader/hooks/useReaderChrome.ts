@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { isTauriRuntime } from "@/app/runtime";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export interface ReaderNotification {
   text: string;
@@ -12,6 +14,8 @@ export function useReaderChrome(hasBlockingOverlay: boolean) {
   const blockingOverlayRef = useRef(hasBlockingOverlay);
   const hudTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fullscreenOperationRef = useRef<Promise<void>>(Promise.resolve());
+  const mountedRef = useRef(true);
   blockingOverlayRef.current = hasBlockingOverlay;
 
   const refreshHudTimeout = useCallback(() => {
@@ -39,7 +43,39 @@ export function useReaderChrome(hasBlockingOverlay: boolean) {
     setNotification(null);
   }, []);
 
+  const changeNativeFullscreen = useCallback((target: boolean | null) => {
+    const appWindow = getCurrentWindow();
+    const operation = fullscreenOperationRef.current.catch(() => {}).then(async () => {
+      if (!mountedRef.current) return;
+
+      try {
+        const current = await appWindow.isFullscreen();
+        if (!mountedRef.current) return;
+        const next = target ?? !current;
+        if (current !== next) await appWindow.setFullscreen(next);
+        const actual = await appWindow.isFullscreen();
+        if (mountedRef.current) setIsFullscreen(actual);
+      } catch (error) {
+        console.warn("Fullscreen request blocked or failed:", error);
+        try {
+          const actual = await appWindow.isFullscreen();
+          if (mountedRef.current) setIsFullscreen(actual);
+        } catch {
+          // Keep the last known state if the native window cannot be queried.
+        }
+        if (mountedRef.current) showToast("Fullscreen could not be changed.");
+      }
+    });
+    fullscreenOperationRef.current = operation;
+    return operation;
+  }, [showToast]);
+
   const toggleFullscreen = useCallback(async () => {
+    if (isTauriRuntime) {
+      await changeNativeFullscreen(null);
+      return;
+    }
+
     try {
       if (document.fullscreenElement) await document.exitFullscreen();
       else await document.documentElement.requestFullscreen();
@@ -47,7 +83,15 @@ export function useReaderChrome(hasBlockingOverlay: boolean) {
       console.warn("Fullscreen request blocked or failed:", error);
       showToast("Fullscreen could not be changed.");
     }
-  }, [showToast]);
+  }, [changeNativeFullscreen, showToast]);
+
+  const exitFullscreen = useCallback(async () => {
+    if (isTauriRuntime) {
+      await changeNativeFullscreen(false);
+    } else if (document.fullscreenElement) {
+      await document.exitFullscreen().catch(() => {});
+    }
+  }, [changeNativeFullscreen]);
 
   useEffect(() => {
     refreshHudTimeout();
@@ -66,14 +110,53 @@ export function useReaderChrome(hasBlockingOverlay: boolean) {
   }, [refreshHudTimeout]);
 
   useEffect(() => {
+    mountedRef.current = true;
+
+    if (isTauriRuntime) {
+      const appWindow = getCurrentWindow();
+      let active = true;
+      let unlisten: (() => void) | undefined;
+      const syncFullscreenState = async () => {
+        try {
+          const fullscreen = await appWindow.isFullscreen();
+          if (active) setIsFullscreen(fullscreen);
+        } catch (error) {
+          console.warn("Could not read native fullscreen state:", error);
+        }
+      };
+
+      void syncFullscreenState();
+      void appWindow.onResized(() => { void syncFullscreenState(); }).then((stopListening) => {
+        if (active) unlisten = stopListening;
+        else stopListening();
+      }).catch((error) => console.warn("Could not listen for native window resize:", error));
+
+      return () => {
+        active = false;
+        mountedRef.current = false;
+        unlisten?.();
+        fullscreenOperationRef.current = fullscreenOperationRef.current
+          .catch(() => {})
+          .then(async () => {
+            if (mountedRef.current) return;
+            const fullscreen = await appWindow.isFullscreen().catch(() => true);
+            if (!mountedRef.current && fullscreen) await appWindow.setFullscreen(false);
+          })
+          .catch((error) => console.warn("Could not exit native fullscreen:", error));
+      };
+    }
+
     const syncFullscreenState = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", syncFullscreenState);
     syncFullscreenState();
-    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+    return () => {
+      mountedRef.current = false;
+      document.removeEventListener("fullscreenchange", syncFullscreenState);
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    };
   }, []);
 
   useEffect(() => () => {
-    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
   }, []);
 
@@ -82,6 +165,7 @@ export function useReaderChrome(hasBlockingOverlay: boolean) {
     refreshHudTimeout,
     isFullscreen,
     toggleFullscreen,
+    exitFullscreen,
     notification,
     showToast,
     dismissNotification,

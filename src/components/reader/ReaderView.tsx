@@ -4,6 +4,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isTauriRuntime } from "@/app/runtime";
 import type { Highlight, ReaderTheme, SavedWord } from "../../types";
 import { captureHighlightAnchor, restoreHighlights } from "../../utils/highlightAnchors";
 import AIResponsePopover from "./AIResponsePopover";
@@ -317,7 +318,8 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     if (showTypography) setShowTypography(false);
     else if (ai.state.visible) ai.close();
     else if (showVocabulary) setShowVocabulary(false);
-  }, [ai.close, ai.state.visible, showTypography, showVocabulary]);
+    else if (isTauriRuntime && chrome.isFullscreen) void chrome.exitFullscreen();
+  }, [ai.close, ai.state.visible, chrome.exitFullscreen, chrome.isFullscreen, showTypography, showVocabulary]);
 
   const handleToggleSettings = useCallback(() => {
     setShowVocabulary(false);
