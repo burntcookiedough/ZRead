@@ -27,15 +27,7 @@ export function useReaderProgress({
 }: UseReaderProgressOptions) {
   const bookMetaRef = useRef(bookMeta);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const disposedRef = useRef(false);
   bookMetaRef.current = bookMeta;
-
-  useEffect(() => {
-    disposedRef.current = false;
-    return () => {
-      disposedRef.current = true;
-    };
-  }, []);
 
   const saveReadingProgress = useCallback((nextChapterIndex: number, sourcePercent: number) => {
     const currentBook = bookMetaRef.current;
@@ -53,7 +45,7 @@ export function useReaderProgress({
     setBookMeta(updatedBook);
     saveQueueRef.current = saveQueueRef.current
       .catch(() => {})
-      .then(() => disposedRef.current ? undefined : storage.saveBookMetadata(updatedBook))
+      .then(() => storage.saveBookMetadata(updatedBook))
       .catch((err) => console.error("Auto progress save failed", err));
   }, [bookId, setBookMeta]);
 

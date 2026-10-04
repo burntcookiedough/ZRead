@@ -203,8 +203,13 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
       const existing = await annotations.deleteHighlight(highlightId);
       if (!existing) return;
       chrome.showToast("Highlight removed.", async () => {
-        await annotations.restoreHighlight(existing);
-        chrome.showToast("Highlight restored.");
+        try {
+          await annotations.restoreHighlight(existing);
+          chrome.showToast("Highlight restored.");
+        } catch (error) {
+          console.error("Could not restore highlight:", error);
+          chrome.showToast("Could not restore highlight.");
+        }
       });
     } catch (error) {
       console.error("Could not remove highlight:", error);

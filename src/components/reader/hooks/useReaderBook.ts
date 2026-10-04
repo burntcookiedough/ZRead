@@ -59,7 +59,6 @@ export function useReaderBook(bookId: string) {
         setCurrentChapterIndex(restoredChapter);
         setParsedBook(parsed);
         setChapters(parsed.chapters);
-        await storage.saveBookMetadata(openedBook);
       } catch (err) {
         console.error("Reader initialization failed:", err);
         if (active) {
