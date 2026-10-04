@@ -308,6 +308,7 @@ export async function loadChapterContent(
   });
   return DOMPurify.sanitize(body.innerHTML, {
     ALLOWED_URI_REGEXP: /^(?:(?:https?|blob):|#)/i,
+    ADD_URI_SAFE_ATTR: ["viewbox", "preserveaspectratio", "width", "height"],
     FORBID_TAGS: ["script", "style", "link", "iframe", "object", "embed", "form", "input", "button", "video", "audio", "feimage", "use"],
     FORBID_ATTR: ["srcset"],
   });
