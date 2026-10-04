@@ -31,6 +31,7 @@ export function useLibrary(onBookSelect: (bookId: string) => void) {
     try {
       setLoading(true);
       setBooks(await storage.getAllBooks());
+      setUploadError(null);
     } catch (error) {
       console.error("Failed to load local books:", error);
       setUploadError("Could not load your library. Your reading data has not been deleted. Try reopening the app.");
@@ -150,7 +151,7 @@ export function useLibrary(onBookSelect: (bookId: string) => void) {
       if (disposed) cleanup();
       else unlisten = cleanup;
     }).catch(() => {
-      if (!disposed) setUploadError("Native file drop is unavailable. Use Import Document to choose an EPUB.");
+      if (!disposed) setUploadError("Native file drop is unavailable. Use Import EPUB to choose an EPUB.");
     });
     return () => {
       disposed = true;
@@ -173,7 +174,9 @@ export function useLibrary(onBookSelect: (bookId: string) => void) {
   }, [importBrowserFile]);
 
   const handleFileInputChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    void importBrowserFile(event.target.files?.[0]);
+    const selectedFile = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    void importBrowserFile(selectedFile);
   }, [importBrowserFile]);
 
   const triggerFileBrowser = useCallback(() => {
