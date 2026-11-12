@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.cjs",
     "lint": "tsc --noEmit",
+    "test": "tsx --test \"src/**/*.test.ts\"",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build"
@@ -20,6 +21,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@tauri-apps/plugin-dialog": "^2.7.1",
     "@tauri-apps/plugin-fs": "^2.5.1",
+    "@tauri-apps/plugin-sql": "^2.4.0",
     "@vitejs/plugin-react": "^5.0.4",
     "dompurify": "^3.4.11",
     "dotenv": "^17.2.3",

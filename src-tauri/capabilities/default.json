@@ -7,6 +7,7 @@
   ],
   "permissions": [
     "core:default",
+    "core:window:allow-set-fullscreen",
     "dialog:default",
     "fs:allow-exists",
     "fs:allow-mkdir",
@@ -23,6 +24,8 @@
           "path": "$APPDATA/books/*"
         }
       ]
-    }
+    },
+    "sql:default",
+    "sql:allow-execute"
   ]
 }

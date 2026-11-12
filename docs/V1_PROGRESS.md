@@ -1,5 +1,7 @@
 # ZRead V1 Progress Map
 
+Updated 2026-10-03: this map describes the earlier merged baseline. The active continuation now implements reader layout stabilization, SQLite persistence and migration, contextual highlights, vocabulary viewing, optional desktop AI, and backup/restore. See [RESUME_CHECKPOINT.md](RESUME_CHECKPOINT.md) for current verification and remaining release acceptance. This historical phase map does not establish release completion.
+
 ## Status
 
 ```text
@@ -303,7 +305,8 @@ Current status:
 ```text
 storage abstraction exists
 desktopStorage stores EPUB files in app data and delegates metadata/progress/highlights/saved words/settings to IndexedDB/localStorage
-SQLite not added
+Phase 5.1 adds SQL plugin wiring and a desktop SQLite health-check adapter skeleton
+SQLite is not used for app metadata yet
 filesystem metadata storage not added
 ```
 

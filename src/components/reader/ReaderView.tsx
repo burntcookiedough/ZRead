@@ -3,839 +3,337 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useCallback } from "react";
-import { Book, Highlight, SavedWord, ReaderSettings, ReaderTheme } from "../../types";
-import { storage } from "@/features/storage";
-import { parseEpub, loadChapterContent, ParsedBook, ParsedChapter } from "../../utils/epubParser";
-// No icons needed for text-only interface
-import SelectionMenu from "./SelectionMenu";
-import TypographyPanel from "./TypographyPanel";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { isTauriRuntime } from "@/app/runtime";
+import type { Highlight, ReaderTheme, SavedWord } from "../../types";
+import { captureHighlightAnchor, restoreHighlights } from "../../utils/highlightAnchors";
 import AIResponsePopover from "./AIResponsePopover";
-import { triggerAIAction } from "../../utils/aiClient";
+import SelectionMenu from "./SelectionMenu";
+import VocabularyPanel from "./VocabularyPanel";
+import { ChapterRail, ReaderFooter, ReaderSettingsPanel, ReaderShell } from "./index";
+import { READER_COLUMN_GAP, type ReaderPositionAction } from "./readerLayout";
+import { useReaderAI } from "./hooks/useReaderAI";
+import { useReaderAnnotations } from "./hooks/useReaderAnnotations";
+import { useReaderBook } from "./hooks/useReaderBook";
+import { useReaderChrome } from "./hooks/useReaderChrome";
+import { useReaderKeyboard } from "./hooks/useReaderKeyboard";
+import { useReaderProgress } from "./hooks/useReaderProgress";
+import { useReaderSettings } from "./hooks/useReaderSettings";
+import { useReaderLayout } from "./hooks/useReaderLayout";
 
 interface ReaderViewProps {
   bookId: string;
   onBackToLibrary: () => void;
 }
 
-const COLUMN_GAP = 48;
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  })[character] || character);
+}
 
-/**
- * Renders an EPUB reading surface with paginated navigation, reader settings, annotations, and AI actions.
- */
+function getThemeClass(theme: ReaderTheme) {
+  switch (theme) {
+    case "light":
+    case "warm":
+      return {
+        wrapper: "bg-white text-black",
+        card: "bg-white text-black border border-black/10 rounded-sm shadow-md",
+        header: "border-black/10 bg-white/95 text-black",
+        footer: "border-black/10 bg-white/95 text-black",
+      };
+    case "dark":
+    case "muted":
+    default:
+      return {
+        wrapper: "bg-black text-white",
+        card: "bg-neutral-900 text-white border border-white/10 rounded-sm shadow-md",
+        header: "border-white/10 bg-black/95 text-white",
+        footer: "border-white/10 bg-black/95 text-white",
+      };
+  }
+}
+
+/** Renders the EPUB reading surface and connects its focused reader hooks. */
 export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps) {
-  // EPUB Parser States
-  const [parsedBook, setParsedBook] = useState<ParsedBook | null>(null);
-  const [currentBookMeta, setCurrentBookMeta] = useState<Book | null>(null);
-  const [chapters, setChapters] = useState<ParsedChapter[]>([]);
-  const [currentChapterIdx, setCurrentChapterIdx] = useState(0);
-  const [chapterContent, setChapterContent] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  // Page Navigation States
-  const [chapterPageIndex, setChapterPageIndex] = useState(0);
-  const [totalChapterPages, setTotalChapterPages] = useState(1);
-  const [viewportWidth, setViewportWidth] = useState(0);
-  const [pendingPageAction, setPendingPageAction] = useState<"first" | "last" | "restore" | null>("restore");
-  const [suppressAnimation, setSuppressAnimation] = useState(true);
-  const [layoutSettled, setLayoutSettled] = useState(false);
   const [showChapterBarPanel, setShowChapterBarPanel] = useState(false);
   const [showChapterLines, setShowChapterLines] = useState(false);
-
-  // Reader HUD Control States
-  const [hudVisible, setHudVisible] = useState(true);
   const [showTypography, setShowTypography] = useState(false);
+  const [showVocabulary, setShowVocabulary] = useState(false);
+  const activeChapterRef = useRef<HTMLButtonElement>(null);
 
-  // Active highlights & Vocab
-  const [highlights, setHighlights] = useState<Highlight[]>([]);
-  const [savedWords, setSavedWords] = useState<SavedWord[]>([]);
+  const ai = useReaderAI();
+  const chrome = useReaderChrome(showTypography || showVocabulary || ai.state.visible);
+  const settings = useReaderSettings(chrome.showToast);
+  const book = useReaderBook(bookId);
+  const annotations = useReaderAnnotations(bookId);
 
-  // Reader Settings
-  const [settings, setSettings] = useState<ReaderSettings>(storage.getReaderSettings());
-
-  // Sync document root dark class list with theme setting
-  useEffect(() => {
-    if (settings.theme === "dark" || settings.theme === "muted") {
-      document.documentElement.classList.add("dark");
-    } else {
-      document.documentElement.classList.remove("dark");
-    }
-  }, [settings.theme]);
-
-  // Fullscreen State and change listeners
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      setIsFullscreen(!!document.fullscreenElement);
-    };
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    // Initial sync
-    handleFullscreenChange();
-    return () => {
-      document.removeEventListener("fullscreenchange", handleFullscreenChange);
-    };
-  }, []);
-
-  // Cleanup: exit fullscreen when leaving the reader view
-  useEffect(() => {
-    return () => {
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {});
-      }
-    };
-  }, []);
-
-  /**
-   * Detects controls and overlays whose clicks should not trigger immersive reader behavior.
-   */
-  const isInteractiveTarget = (target: HTMLElement) => {
-    return !!target.closest(
-      "button, input, textarea, select, a, " +
-        "#reader-hud-header, #reader-footer, #typo-panel-sec, " +
-        "#selection-floating-menu, #ai-response-popover, #chapter-edge-nav, #toast-notification"
-    );
-  };
-
-  /**
-   * Enters fullscreen only for direct reading-surface clicks, leaving controls interactive.
-   */
-  const handleGlobalClick = (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    if (isInteractiveTarget(target)) {
-      return;
-    }
-
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch((err) => {
-        console.warn("Fullscreen request blocked or failed:", err);
-      });
-    }
-  };
-
-  // HUD disappear timers
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
-
-  // AI Popover state
-  const [aiState, setAiState] = useState<{
-    visible: boolean;
-    type: "define" | "explain" | "summarize";
-    inputText: string;
-    result: any;
-    loading: boolean;
-    error: string | null;
-  }>({
-    visible: false,
-    type: "define",
-    inputText: "",
-    result: null,
-    loading: false,
-    error: null,
+  const readerError = book.error || settings.error || annotations.error;
+  const layout = useReaderLayout({
+    contentReady: settings.settingsReady && annotations.ready && !book.loading && !readerError && !!book.chapterContent,
+    contentKey: `${bookId}:${book.currentChapterIndex}`,
+    layoutKey: [
+      settings.settings.fontFamily,
+      settings.settings.fontSize,
+      settings.settings.lineHeight,
+      settings.settings.contentWidth,
+      settings.settings.viewMode,
+    ].join(":"),
+    savedProgressPercent: book.currentBookMeta?.progress?.scrollPercent || 0,
   });
 
-  // Toast / Floating message notification
-  const [notification, setNotification] = useState<{ text: string; onUndo?: () => void } | null>(null);
-  const [toastTimeoutId, setToastTimeoutId] = useState<any>(null);
+  const progress = useReaderProgress({
+    bookId,
+    bookMeta: book.currentBookMeta,
+    setBookMeta: book.setCurrentBookMeta,
+    chapterIndex: book.currentChapterIndex,
+    layoutSettled: layout.layoutSettled,
+    loading: book.loading,
+    settingsReady: settings.settingsReady && annotations.ready,
+    getSourcePercent: layout.getSourcePercent,
+  });
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chapterPageIndexRef = useRef(chapterPageIndex);
-  const currentBookMetaRef = useRef(currentBookMeta);
   useEffect(() => {
-    chapterPageIndexRef.current = chapterPageIndex;
-  }, [chapterPageIndex]);
+    layout.setNextPosition("restore");
+  }, [bookId, layout.setNextPosition]);
 
   useEffect(() => {
-    currentBookMetaRef.current = currentBookMeta;
-  }, [currentBookMeta]);
+    const isDark = settings.settings.theme === "dark" || settings.settings.theme === "muted";
+    document.documentElement.classList.toggle("dark", isDark);
+  }, [settings.settings.theme]);
 
-  /**
-   * Measures the rendered chapter width and converts it into page-count metadata.
-   */
-  const getPaginationMetrics = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return null;
+  useEffect(() => {
+    if (book.chapterContent && layout.containerRef.current) {
+      layout.containerRef.current.scrollLeft = 0;
+    }
+  }, [book.chapterContent, layout.containerRef]);
 
-    const viewport = container.clientWidth;
-    if (viewport <= 0) return null;
-
-    const content = container.querySelector<HTMLElement>("#reader-chapter-body");
-    const scrollWidth = content?.scrollWidth || container.scrollWidth;
-    const stride = viewport + COLUMN_GAP;
-    const total = Math.max(1, Math.ceil((scrollWidth + COLUMN_GAP) / stride));
-
-    return { viewport, total };
-  }, []);
-
-  /**
-   * Converts persisted chapter progress into a valid page index for the current layout.
-   */
-  const pageForSavedPercent = useCallback((total: number) => {
-    const savedPercent = currentBookMetaRef.current?.progress?.scrollPercent || 0;
-    return Math.min(total - 1, Math.max(0, Math.round((savedPercent / 100) * (total - 1))));
-  }, []);
-
-  const activeChapterRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (showChapterBarPanel && activeChapterRef.current) {
       requestAnimationFrame(() => {
         activeChapterRef.current?.scrollIntoView({ block: "nearest", behavior: "auto" });
       });
     }
-  }, [showChapterBarPanel, currentChapterIdx]);
+  }, [showChapterBarPanel, book.currentChapterIndex]);
 
-  // Manage HUD show/hide timeouts
-  /**
-   * Keeps the HUD visible during interaction and hides it after reader inactivity.
-   */
-  const refreshHudTimeout = useCallback(() => {
-    setHudVisible(true);
-    if (timerRef.current) clearTimeout(timerRef.current);
-    
-    timerRef.current = setTimeout(() => {
-      // Don't auto-hide HUD if configuration dialog or AI result is open
-      if (!showTypography && !aiState.visible) {
-        setHudVisible(false);
-      }
-    }, 2500);
-  }, [showTypography, aiState.visible]);
+  const renderedChapterHtml = useMemo(() => {
+    if (!book.chapterContent) return "";
 
-  useEffect(() => {
-    refreshHudTimeout();
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
-  }, [refreshHudTimeout]);
+    const chapterHighlights = annotations.highlights.filter(
+      (highlight) => highlight.chapterIndex === book.currentChapterIndex,
+    );
+    let content = chapterHighlights.length
+      ? restoreHighlights(book.chapterContent, chapterHighlights)
+      : book.chapterContent;
 
-  // Handle Mouse Move anywhere to display HUD
-  /**
-   * Refreshes the HUD timer when the reader detects pointer movement.
-   */
-  const handleMouseMove = () => {
-    refreshHudTimeout();
-  };
-
-  // Trigger self-dismissing toast notifications
-  /**
-   * Displays a temporary reader notification, optionally with a single undo action.
-   */
-  const showToast = (txt: string, onUndo?: () => void) => {
-    if (toastTimeoutId) {
-      clearTimeout(toastTimeoutId);
-    }
-    setNotification({ text: txt, onUndo });
-    const timer = setTimeout(() => {
-      setNotification(null);
-    }, onUndo ? 5000 : 2800);
-    setToastTimeoutId(timer);
-  };
-
-  // Fetch file & parse EPUB
-  useEffect(() => {
-    const initializeBook = async () => {
-      try {
-        setLoading(true);
-        setError(null);
-
-        // 1. Fetch raw binary file from IDB
-        const fileBytes = await storage.getBookFile(bookId);
-        if (!fileBytes) {
-          throw new Error("Local book binary data file not found in database.");
-        }
-
-        // 2. Parse EPUB Structure
-        const parsed = await parseEpub(fileBytes);
-        setParsedBook(parsed);
-        setChapters(parsed.chapters);
-
-        // 3. Load Book Metadata (from IDB)
-        const booksList = await storage.getAllBooks();
-        const thisBook = booksList.find((b) => b.id === bookId);
-
-        if (thisBook) {
-          setCurrentBookMeta(thisBook);
-          // Restore last chapter index
-          const lastIdx = thisBook.progress ? thisBook.progress.chapterIndex : 0;
-          setCurrentChapterIdx(
-            lastIdx >= 0 && lastIdx < parsed.chapters.length ? lastIdx : 0
-          );
-        } else {
-          throw new Error("Metadata for selected book not found.");
-        }
-
-        // Update last opened timeline
-        if (thisBook) {
-          await storage.saveBookMetadata({
-            ...thisBook,
-            lastOpenedAt: new Date().toISOString(),
-          });
-        }
-
-        // 4. Load initial collections
-        const dbHighlights = await storage.getBookHighlights(bookId);
-        setHighlights(dbHighlights);
-        const dbWords = await storage.getBookSavedWords(bookId);
-        setSavedWords(dbWords);
-
-      } catch (err: any) {
-        console.error("Reader initialization failed:", err);
-        setError(err.message || "An issue occurred while loading this EPUB reader engine.");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    initializeBook();
-  }, [bookId]);
-
-  // Read raw highlights for the current book
-  /**
-   * Reloads persisted highlights for the active book after a highlight mutation.
-   */
-  const loadHighlights = async () => {
-    const dbHighlights = await storage.getBookHighlights(bookId);
-    setHighlights(dbHighlights);
-  };
-
-  /**
-   * Reloads persisted saved vocabulary entries for the active book.
-   */
-  const loadSavedWords = async () => {
-    const dbWords = await storage.getBookSavedWords(bookId);
-    setSavedWords(dbWords);
-  };
-
-  // Load active chapter content when chapter index changes
-  useEffect(() => {
-    if (!parsedBook || chapters.length === 0) return;
-
-    const loadChapter = async () => {
-      try {
-        setLoading(true);
-        setLayoutSettled(false);
-        setSuppressAnimation(true);
-        const activeChapter = chapters[currentChapterIdx];
-        
-        // Load, rewrite images, scrape styles
-        const html = await loadChapterContent(parsedBook.zipInstance, activeChapter.zipPath);
-        setChapterContent(html);
-
-        if (containerRef.current) {
-          containerRef.current.scrollLeft = 0;
-        }
-      } catch (e) {
-        console.error("Failed to load chapter content:", e);
-        setChapterContent("<p class='error'>Failed loading chapter text. The page might be corrupted or missing.</p>");
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadChapter();
-  }, [currentChapterIdx, parsedBook, chapters]);
-
-  // Helper to save reading progress as percentage based on current page
-  /**
-   * Persists the reader's current chapter and page as percentage-based progress.
-   */
-  const saveReadingProgress = (pageIdx: number, totalPages: number) => {
-    if (!currentBookMeta) return;
-    const percent = totalPages > 1 ? (pageIdx / (totalPages - 1)) * 100 : 0;
-    
-    const updatedMeta: Book = {
-      ...currentBookMeta,
-      lastOpenedAt: new Date().toISOString(),
-      progress: {
-        chapterIndex: currentChapterIdx,
-        scrollPercent: Number(percent.toFixed(2)),
-      },
-    };
-    setCurrentBookMeta(updatedMeta);
-    
-    const timeoutId = (window as any)._dbSaveTimeout;
-    if (timeoutId) clearTimeout(timeoutId);
-    (window as any)._dbSaveTimeout = setTimeout(() => {
-      storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
-    }, 800);
-  };
-
-  // Centralized page turning handlers
-  /**
-   * Advances within the chapter or moves to the first page of the next chapter.
-   */
-  const handleNextPage = () => {
-    if (chapterPageIndex < totalChapterPages - 1) {
-      const nextP = chapterPageIndex + 1;
-      setSuppressAnimation(false);
-      setChapterPageIndex(nextP);
-      saveReadingProgress(nextP, totalChapterPages);
-    } else {
-      if (currentChapterIdx < chapters.length - 1) {
-        setSuppressAnimation(true);
-        setPendingPageAction("first");
-        setCurrentChapterIdx((prev) => prev + 1);
-      } else {
-        showToast("You have reached the end of the book.");
-      }
-    }
-  };
-
-  /**
-   * Moves backward within the chapter or to the last page of the previous chapter.
-   */
-  const handlePrevPage = () => {
-    if (chapterPageIndex > 0) {
-      const prevP = chapterPageIndex - 1;
-      setSuppressAnimation(false);
-      setChapterPageIndex(prevP);
-      saveReadingProgress(prevP, totalChapterPages);
-    } else {
-      if (currentChapterIdx > 0) {
-        setSuppressAnimation(true);
-        setPendingPageAction("last");
-        setCurrentChapterIdx((prev) => prev - 1);
-      } else {
-        showToast("You are at the very beginning of the book.");
-      }
-    }
-  };
-
-  // Recalculates horizontal scroll offset on window resize
-  /**
-   * Recomputes pagination after viewport changes while preserving the current page when possible.
-   */
-  const recalculatePages = useCallback(() => {
-    setSuppressAnimation(true);
-    const metrics = getPaginationMetrics();
-    if (!metrics) return;
-    const { viewport, total } = metrics;
-    setViewportWidth(viewport);
-    setTotalChapterPages(total);
-    const targetPage = Math.min(total - 1, chapterPageIndexRef.current);
-    setChapterPageIndex(targetPage);
-
-    setTimeout(() => {
-      setSuppressAnimation(false);
-    }, 50);
-  }, [getPaginationMetrics]);
-
-  // Window resize handler
-  useEffect(() => {
-    const handleResize = () => {
-      setSuppressAnimation(true);
-      recalculatePages();
-    };
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [recalculatePages]);
-
-  // Recalculate pages and scroll position when chapter finishes loading or settings change
-  useEffect(() => {
-    if (loading || !chapterContent || !containerRef.current) return;
-
-    const timer = setTimeout(() => {
-      const metrics = getPaginationMetrics();
-      if (!metrics) return;
-      const { viewport, total } = metrics;
-
-      setViewportWidth(viewport);
-      setTotalChapterPages(total);
-
-      let targetPage = chapterPageIndexRef.current;
-      if (pendingPageAction === "last") {
-        targetPage = total - 1;
-      } else if (pendingPageAction === "first") {
-        targetPage = 0;
-      } else if (pendingPageAction === "restore") {
-        targetPage = pageForSavedPercent(total);
-      } else {
-        targetPage = Math.min(total - 1, Math.max(0, chapterPageIndexRef.current));
-      }
-
-      setChapterPageIndex(targetPage);
-      setPendingPageAction(null);
-      
-      // Save progress immediately
-      const percent = total > 1 ? (targetPage / (total - 1)) * 100 : 0;
-      const meta = currentBookMetaRef.current;
-      if (meta) {
-        const updatedMeta: Book = {
-          ...meta,
-          lastOpenedAt: new Date().toISOString(),
-          progress: {
-            chapterIndex: currentChapterIdx,
-            scrollPercent: Number(percent.toFixed(2)),
-          },
-        };
-        setCurrentBookMeta(updatedMeta);
-        storage.saveBookMetadata(updatedMeta).catch((e) => console.error("Auto progress save failed", e));
-      }
-
-      setLayoutSettled(true);
-      setTimeout(() => {
-        setSuppressAnimation(false);
-      }, 50);
-    }, 150);
-
-    return () => clearTimeout(timer);
-  }, [loading, chapterContent, pendingPageAction, settings, currentChapterIdx, getPaginationMetrics, pageForSavedPercent]);
-
-  // Highlights injector implementation
-  /**
-   * Produces the chapter HTML with reader-managed highlights and the optional front-cover header.
-   */
-  const getRenderHtml = () => {
-    let content = chapterContent;
-    if (!content) return "";
-    
-    // Highlights applicable only for this chapter path
-    const chapterHighlights = highlights.filter((h) => h.chapterIndex === currentChapterIdx);
-    
-    if (chapterHighlights.length > 0) {
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(content, "text/html");
-      
-      // Sort highlights from longest text to shortest
-      const sorted = [...chapterHighlights].sort((a, b) => b.text.length - a.text.length);
-      
-      const traverse = (node: Node) => {
-        if (node.nodeType === Node.TEXT_NODE) {
-          const text = node.textContent || "";
-          let parent = node.parentNode;
-          if (
-            !parent ||
-            parent.nodeName === "SCRIPT" ||
-            parent.nodeName === "STYLE" ||
-            (parent instanceof HTMLElement && parent.getAttribute("data-highlight-id"))
-          ) {
-            return;
-          }
-          
-          for (const h of sorted) {
-            const index = text.toLowerCase().indexOf(h.text.toLowerCase());
-            if (index !== -1) {
-              const beforeText = text.substring(0, index);
-              const matchText = text.substring(index, index + h.text.length);
-              const afterText = text.substring(index + h.text.length);
-              
-              const fragment = document.createDocumentFragment();
-              if (beforeText) {
-                fragment.appendChild(document.createTextNode(beforeText));
-              }
-              
-              const span = document.createElement("span");
-              span.className = `${h.color} cursor-pointer relative py-0.5 select-all hover:opacity-95 transition-opacity`;
-              span.setAttribute("data-highlight-id", h.id);
-              span.title = "Delete highlight";
-              span.appendChild(document.createTextNode(matchText));
-              fragment.appendChild(span);
-              
-              if (afterText) {
-                const remainingTextNode = document.createTextNode(afterText);
-                fragment.appendChild(remainingTextNode);
-                // Traverse subsequent text nodes
-                traverse(remainingTextNode);
-              }
-              
-              parent.replaceChild(fragment, node);
-              break;
-            }
-          }
-        } else {
-          const children = Array.from(node.childNodes);
-          for (const child of children) {
-            traverse(child);
-          }
-        }
-      };
-      
-      traverse(doc.body);
-      content = doc.body.innerHTML;
-    }
-
-    // Prepend custom front cover header inside the columns for chapter 0
-    if (currentChapterIdx === 0 && parsedBook) {
-      const coverHtml = `
+    if (book.currentChapterIndex === 0 && book.parsedBook) {
+      const title = escapeHtml(book.parsedBook.title);
+      const author = escapeHtml(book.parsedBook.author);
+      content = `
         <div class="mb-10 pb-6 border-b border-black/10 dark:border-white/10 text-center select-none animate-in fade-in duration-300" style="break-inside: avoid-column; break-after: auto;" id="book-front-cover">
-          <h1 class="font-serif font-bold text-3xl md:text-4xl my-2 text-center leading-tight border-none pb-0">
-            ${parsedBook.title}
-          </h1>
-          <p class="font-sans text-[10px] uppercase tracking-widest text-black/50 dark:text-white/50 font-bold mb-8">
-            by ${parsedBook.author}
-          </p>
+          <h1 class="font-serif font-bold text-3xl md:text-4xl my-2 text-center leading-tight border-none pb-0">${title}</h1>
+          <p class="font-sans text-[10px] uppercase tracking-widest text-black/50 dark:text-white/50 font-bold mb-8">by ${author}</p>
         </div>
-      `;
-      content = coverHtml + content;
+      ` + content;
     }
 
     return content;
-  };
+  }, [
+    book.chapterContent,
+    book.currentChapterIndex,
+    book.parsedBook?.author,
+    book.parsedBook?.title,
+    annotations.highlights,
+  ]);
+  const renderedChapterContent = useMemo(() => ({ __html: renderedChapterHtml }), [renderedChapterHtml]);
 
-  // Handle direct click on highlights within the XHTML document to delete them
-  /**
-   * Handles direct interactions inside chapter HTML, including highlight deletion.
-   */
-  const handleChapterClick = async (e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    const highlightId = target.getAttribute("data-highlight-id");
-    if (highlightId) {
-      const existingHl = highlights.find((h) => h.id === highlightId);
-      if (existingHl) {
-        await storage.deleteHighlight(highlightId);
-        await loadHighlights();
-        showToast("Highlight removed.", async () => {
-          await storage.saveHighlight(existingHl);
-          await loadHighlights();
-          showToast("Highlight restored.");
-        });
-      }
+  const navigateToChapter = useCallback((target: number, position: ReaderPositionAction) => {
+    if (!book.chapters.length) return;
+    const nextChapter = Math.min(book.chapters.length - 1, Math.max(0, target));
+    if (nextChapter === book.getCurrentChapterIndex()) {
+      layout.requestPosition(position);
+      return;
     }
-  };
 
-  // Text selection handler callbacks from floating SelectionMenu
-  /**
-   * Formats optional-AI failures without implying that offline reading actions are broken.
-   */
-  const getAIErrorMessage = (err: any, actionLabel: string) => {
-    const detail = err?.message ? `${err.message} ` : "";
-    return `${detail}${actionLabel} is unavailable. Reading, copy, save, and highlight still work offline.`;
-  };
+    progress.saveReadingProgress(nextChapter, position === "last" ? 100 : 0);
+    layout.setNextPosition(position);
+    book.navigateToChapterIndex(nextChapter);
+  }, [book.chapters.length, book.getCurrentChapterIndex, book.navigateToChapterIndex, layout.requestPosition, layout.setNextPosition, progress.saveReadingProgress]);
 
-  /**
-   * Applies the selected-text command requested by the floating selection menu.
-   */
-  const handleSelectionAction = async (
+  const handleBackToLibrary = useCallback(async () => {
+    await Promise.all([progress.flushProgress(), settings.flushSettings()]);
+    onBackToLibrary();
+  }, [onBackToLibrary, progress.flushProgress, settings.flushSettings]);
+
+  const handleNextPage = useCallback(() => {
+    if (!layout.layoutSettled) return;
+    const { unitIndex, unitCount } = layout.getPosition();
+    const chapterIndex = book.getCurrentChapterIndex();
+    if (unitIndex < unitCount - 1) {
+      layout.goToUnit(unitIndex + 1);
+      progress.saveReadingProgress(chapterIndex, layout.getSourcePercent());
+    } else if (chapterIndex < book.chapters.length - 1) {
+      navigateToChapter(chapterIndex + 1, "first");
+    } else {
+      chrome.showToast("You have reached the end of the book.");
+    }
+  }, [book.chapters.length, book.getCurrentChapterIndex, chrome.showToast, layout.getPosition, layout.getSourcePercent, layout.goToUnit, layout.layoutSettled, navigateToChapter, progress.saveReadingProgress]);
+
+  const handlePrevPage = useCallback(() => {
+    if (!layout.layoutSettled) return;
+    const { unitIndex } = layout.getPosition();
+    const chapterIndex = book.getCurrentChapterIndex();
+    if (unitIndex > 0) {
+      layout.goToUnit(unitIndex - 1);
+      progress.saveReadingProgress(chapterIndex, layout.getSourcePercent());
+    } else if (chapterIndex > 0) {
+      navigateToChapter(chapterIndex - 1, "last");
+    } else {
+      chrome.showToast("You are at the very beginning of the book.");
+    }
+  }, [book.getCurrentChapterIndex, chrome.showToast, layout.getPosition, layout.getSourcePercent, layout.goToUnit, layout.layoutSettled, navigateToChapter, progress.saveReadingProgress]);
+
+  const handleChapterClick = useCallback(async (event: React.MouseEvent) => {
+    const highlightId = (event.target as HTMLElement).getAttribute("data-highlight-id");
+    if (!highlightId) return;
+
+    try {
+      const existing = await annotations.deleteHighlight(highlightId);
+      if (!existing) return;
+      chrome.showToast("Highlight removed.", async () => {
+        try {
+          await annotations.restoreHighlight(existing);
+          chrome.showToast("Highlight restored.");
+        } catch (error) {
+          console.error("Could not restore highlight:", error);
+          chrome.showToast("Could not restore highlight.");
+        }
+      });
+    } catch (error) {
+      console.error("Could not remove highlight:", error);
+      chrome.showToast("Could not remove highlight.");
+    }
+  }, [annotations.deleteHighlight, annotations.restoreHighlight, chrome.showToast]);
+
+  const handleSelectionAction = useCallback(async (
     action: "copy" | "define" | "explain" | "save" | "highlight",
     extra?: string,
-    selectedTextOverride?: string
+    selectedTextOverride?: string,
   ) => {
     const selection = window.getSelection();
-
     const text = (selection?.toString() || selectedTextOverride || "").trim();
     if (!text) return;
 
-    // Retrieve context node sentence
-    const contextNode = selection?.anchorNode?.parentNode;
-    const sentenceContext = contextNode?.textContent || text;
-
-    if (action === "copy") {
-      try {
-        await navigator.clipboard.writeText(text);
-        showToast("Copied selected text.");
-      } catch (err) {
-        console.error("Copy selected text failed:", err);
-        showToast("Copy failed. Use Ctrl+C while the text is selected.");
-      } finally {
-        selection?.removeAllRanges();
-      }
-
-    } else if (action === "highlight") {
-      const colorClass = extra || "custom-highlight-yellow";
-      const newHl: Highlight = {
-        id: `hl_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
-        bookId,
-        chapterIndex: currentChapterIdx,
-        text,
-        color: colorClass,
-        createdAt: new Date().toISOString(),
-      };
-
-      await storage.saveHighlight(newHl);
-      await loadHighlights();
-      showToast("Highlight added.");
-      selection?.removeAllRanges();
-
-    } else if (action === "save") {
-      // Save word callback (defines dynamically with AI behind the scenes!)
-      const wordId = `word_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
-      
-      const newSaved: SavedWord = {
-        id: wordId,
-        bookId,
-        word: text,
-        sentenceContext,
-        createdAt: new Date().toISOString(),
-      };
-
-      await storage.saveSavedWord(newSaved);
-      await loadSavedWords();
-      showToast(`Saved "${text}" to vocabulary.`);
-
-      // Lazily request definition for background enhancement!
-      try {
-        const enriched = await triggerAIAction({
-          action: "define",
-          word: text,
-          context: sentenceContext,
-          bookTitle: parsedBook?.title,
-        });
-
-        if (enriched) {
-          await storage.saveSavedWord({
-            ...newSaved,
-            definition: enriched.definition,
-            contextualMeaning: enriched.contextualMeaning,
-            simpleExample: enriched.simpleExample,
-          });
-          await loadSavedWords();
-        }
-      } catch (err) {
-        console.error("Failed to fetch vocabulary word description background enrichment:", err);
-      }
-
-    } else if (action === "define") {
-      // Open AI Popover
-      setAiState({
-        visible: true,
-        type: "define",
-        inputText: text,
-        result: null,
-        loading: true,
-        error: null,
-      });
-
-      try {
-        const res = await triggerAIAction({
-          action: "define",
-          word: text,
-          context: sentenceContext,
-          bookTitle: parsedBook?.title,
-        });
-
-        setAiState((prev) => ({ ...prev, loading: false, result: res }));
-      } catch (err: any) {
-        setAiState((prev) => ({ ...prev, loading: false, error: getAIErrorMessage(err, "AI definition") }));
-      }
-
-    } else if (action === "explain") {
-      setAiState({
-        visible: true,
-        type: "explain",
-        inputText: text,
-        result: null,
-        loading: true,
-        error: null,
-      });
-
-      try {
-        const res = await triggerAIAction({
-          action: "explain",
-          text,
-          bookTitle: parsedBook?.title,
-        });
-
-        setAiState((prev) => ({ ...prev, loading: false, result: res }));
-      } catch (err: any) {
-        setAiState((prev) => ({ ...prev, loading: false, error: getAIErrorMessage(err, "AI explanation") }));
-      }
-    }
-  };
-
-  // Keyboard Navigation & global listeners
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Escape closes current overlays
-      if (e.key === "Escape") {
-        if (showTypography) setShowTypography(false);
-        else if (aiState.visible) setAiState((prev) => ({ ...prev, visible: false }));
-        return;
-      }
-
-      // Prev chapter on left arrow, next on right arrow (no input field overlay blocks active)
-      if (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "TEXTAREA") {
-        return;
-      }
-
-      // Automatically request fullscreen on reading navigation keyboard interaction
-      if (!document.fullscreenElement) {
-        document.documentElement.requestFullscreen().catch(() => {});
-      }
-
-      if (e.key === "ArrowLeft") {
-        e.preventDefault();
-        handlePrevPage();
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        handleNextPage();
-      } else if (e.key === "t" || e.key === "T") {
-        // Toggle settings
-        e.preventDefault();
-        setShowTypography((prev) => !prev);
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [showTypography, aiState.visible, currentChapterIdx, chapters, chapterPageIndex, totalChapterPages]);
-
-  // Chapter Summarization callback (from HUD sparking action)
-  /**
-   * Sends the current chapter text to the optional AI summarizer and displays the result.
-   */
-  const handleSummarizeChapter = async () => {
-    if (!chapterContent) return;
-    
-    // Scrape clean text nodes for summarizer context
-    const cleanText = document.getElementById("reader-chapter-body")?.innerText || "Unknown text content.";
-    
-    setAiState({
-      visible: true,
-      type: "summarize",
-      inputText: `Chapter ${currentChapterIdx + 1}: ${chapters[currentChapterIdx]?.title || 'Section'}`,
-      result: null,
-      loading: true,
-      error: null,
-    });
-
+    const sentenceContext = selection?.anchorNode?.parentNode?.textContent || text;
     try {
-      const res = await triggerAIAction({
-        action: "summarize",
-        text: cleanText.slice(0, 8000), // safe length
-        bookTitle: parsedBook?.title,
-      });
+      if (action === "copy") {
+        try {
+          await navigator.clipboard.writeText(text);
+          chrome.showToast("Copied selected text.");
+        } catch (error) {
+          console.error("Copy selected text failed:", error);
+          chrome.showToast("Copy failed. Use Ctrl+C while the text is selected.");
+        } finally {
+          selection?.removeAllRanges();
+        }
+        return;
+      }
 
-      setAiState((prev) => ({ ...prev, loading: false, result: res }));
-    } catch (err: any) {
-      setAiState((prev) => ({ ...prev, loading: false, error: err.message || "An issue occurred invoking Gemini." }));
-    }
-  };
-
-  // Change font sizes helper
-  /**
-   * Persists typography and layout settings while prompting pagination to settle again.
-   */
-  const handleSettingsChange = (newSettings: ReaderSettings) => {
-    setSuppressAnimation(true);
-    setSettings(newSettings);
-    storage.saveReaderSettings(newSettings);
-  };
-
-  // Theme map helper definitions
-  /**
-   * Maps the persisted reader theme to the wrapper, header, and footer class groups.
-   */
-  const getThemeClass = (t: ReaderTheme) => {
-    switch (t) {
-      case "light":
-      case "warm":
-        return {
-          wrapper: "bg-white text-black",
-          card: "bg-white text-black border border-black/10 rounded-sm shadow-md",
-          header: "border-black/10 bg-white/95 text-black",
-          footer: "border-black/10 bg-white/95 text-black",
+      if (action === "highlight") {
+        const root = layout.contentRef.current;
+        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
+        const anchor = root && range ? captureHighlightAnchor(root, range) : {};
+        const highlight: Highlight = {
+          id: `hl_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+          bookId,
+          chapterIndex: book.currentChapterIndex,
+          text,
+          color: extra || "custom-highlight-yellow",
+          createdAt: new Date().toISOString(),
+          ...anchor,
         };
-      case "dark":
-      case "muted":
-      default:
-        return {
-          wrapper: "bg-black text-white",
-          card: "bg-neutral-900 text-white border border-white/10 rounded-sm shadow-md",
-          header: "border-white/10 bg-black/95 text-white",
-          footer: "border-white/10 bg-black/95 text-white",
-        };
-    }
-  };
+        await annotations.saveHighlight(highlight);
+        chrome.showToast("Highlight added.");
+        selection?.removeAllRanges();
+        return;
+      }
 
-  if (loading && !chapterContent) {
+      if (action === "save") {
+        const word: SavedWord = {
+          id: `word_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+          bookId,
+          word: text,
+          sentenceContext,
+          createdAt: new Date().toISOString(),
+        };
+        await annotations.saveSavedWord(word);
+        chrome.showToast(`Saved "${text}" to vocabulary.`);
+        return;
+      }
+
+      setShowVocabulary(false);
+      if (action === "define") {
+        void ai.request({
+          action,
+          word: text,
+          context: sentenceContext,
+          bookTitle: book.parsedBook?.title,
+        }, text);
+      } else {
+        void ai.request({ action, text, bookTitle: book.parsedBook?.title }, text);
+      }
+    } catch (error) {
+      console.error(`Could not ${action} selected text:`, error);
+      chrome.showToast(action === "highlight" ? "Could not save highlight." : "Could not save vocabulary entry.");
+    }
+  }, [ai.request, annotations.saveHighlight, annotations.saveSavedWord, book.currentChapterIndex, book.parsedBook?.title, bookId, chrome.showToast, layout.contentRef]);
+
+  const handleSummarizeChapter = useCallback(() => {
+    if (!book.chapterContent) return;
+    setShowVocabulary(false);
+    const chapterText = document.getElementById("reader-chapter-body")?.innerText || "Unknown text content.";
+    const chapterTitle = book.chapters[book.currentChapterIndex]?.title || "Section";
+    void ai.request({
+      action: "summarize",
+      text: chapterText.slice(0, 8000),
+      bookTitle: book.parsedBook?.title,
+    }, `Chapter ${book.currentChapterIndex + 1}: ${chapterTitle}`);
+  }, [ai.request, book.chapterContent, book.chapters, book.currentChapterIndex, book.parsedBook?.title]);
+
+  const handleDeleteSavedWord = useCallback(async (word: SavedWord) => {
+    try {
+      await annotations.deleteSavedWord(word.id);
+      chrome.showToast("Saved word removed.");
+    } catch (error) {
+      console.error("Could not remove saved word:", error);
+      chrome.showToast("Could not remove saved word.");
+    }
+  }, [annotations.deleteSavedWord, chrome.showToast]);
+
+  const closeTopmostOverlay = useCallback(() => {
+    if (showTypography) setShowTypography(false);
+    else if (ai.state.visible) ai.close();
+    else if (showVocabulary) setShowVocabulary(false);
+    else if (isTauriRuntime && chrome.isFullscreen) void chrome.exitFullscreen();
+  }, [ai.close, ai.state.visible, chrome.exitFullscreen, chrome.isFullscreen, showTypography, showVocabulary]);
+
+  const handleToggleSettings = useCallback(() => {
+    setShowVocabulary(false);
+    setShowTypography((visible) => !visible);
+  }, []);
+
+  useReaderKeyboard({
+    closeTopmostOverlay,
+    onPreviousPage: handlePrevPage,
+    onNextPage: handleNextPage,
+    onToggleSettings: handleToggleSettings,
+  });
+
+  if (!settings.settingsReady || !annotations.ready || (book.loading && !book.chapterContent)) {
     return (
       <div className="w-full h-screen flex flex-col items-center justify-center bg-white dark:bg-black text-black dark:text-white" id="read-loader">
         <p className="text-[10px] font-sans uppercase tracking-widest font-bold animate-pulse">Opening reader workspace...</p>
@@ -843,13 +341,13 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     );
   }
 
-  if (error) {
+  if (readerError) {
     return (
       <div className="w-full h-screen flex flex-col items-center justify-center p-6 bg-white dark:bg-black text-center text-black dark:text-white" id="read-error">
         <h3 className="font-serif italic text-xl mb-2">Could not initialize book</h3>
-        <p className="text-xs text-black/60 dark:text-white/60 max-w-sm mb-6 leading-relaxed">{error}</p>
+        <p className="text-xs text-black/60 dark:text-white/60 max-w-sm mb-6 leading-relaxed">{readerError}</p>
         <button
-          onClick={onBackToLibrary}
+          onClick={() => void handleBackToLibrary()}
           id="btn-back-err"
           className="px-5 py-2 bg-black dark:bg-white text-white dark:text-black rounded-sm border border-black dark:border-white font-sans text-[10px] uppercase tracking-widest font-bold hover:bg-white hover:text-black dark:hover:bg-black dark:hover:text-white transition-all cursor-pointer"
         >
@@ -859,157 +357,107 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
     );
   }
 
-  const themeStyle = getThemeClass(settings.theme);
-  const activeChapter = chapters[currentChapterIdx];
-  const isMobile = typeof window !== "undefined" && window.innerWidth < 768;
-  const visiblePageCount = settings.viewMode === "split" && !isMobile ? 2 : 1;
-  const viewportMaxWidth = settings.contentWidth * visiblePageCount + (visiblePageCount - 1) * COLUMN_GAP;
-  const viewportWidthStr = isMobile
-    ? `min(calc(100vw - 32px), ${settings.contentWidth}px)`
+  const settingsValue = settings.settings;
+  const themeStyle = getThemeClass(settingsValue.theme);
+  const activeChapter = book.chapters[book.currentChapterIndex];
+  const visiblePageCount = settingsValue.viewMode === "split" && !layout.isNarrowViewport ? 2 : 1;
+  const viewportMaxWidth = settingsValue.contentWidth * visiblePageCount + (visiblePageCount - 1) * READER_COLUMN_GAP;
+  const viewportWidth = layout.isNarrowViewport
+    ? `min(calc(100vw - 32px), ${settingsValue.contentWidth}px)`
     : `min(calc(100vw - 96px), ${viewportMaxWidth}px)`;
-  const viewportTopClass = isFullscreen ? "top-6" : "top-16";
-  const viewportBottomClass = isFullscreen ? "bottom-6" : "bottom-12";
+  const viewportTop = chrome.isFullscreen ? "top-6" : "top-16";
+  const viewportBottom = chrome.isFullscreen ? "bottom-6" : "bottom-12";
 
   return (
-    <div
-      onMouseMove={handleMouseMove}
-      onClick={handleGlobalClick}
-      id="reader-hud-root"
-      className={`relative w-full h-screen overflow-hidden select-text transition-colors duration-300 ${themeStyle.wrapper}`}
+    <ReaderShell
+      hudVisible={chrome.hudVisible}
+      themeStyle={themeStyle}
+      bookTitle={book.parsedBook?.title}
+      activeChapterTitle={activeChapter?.title}
+      showSettings={showTypography}
+      isFullscreen={chrome.isFullscreen}
+      onMouseMove={chrome.refreshHudTimeout}
+      onBackToLibrary={() => void handleBackToLibrary()}
+      onSummarizeChapter={handleSummarizeChapter}
+      onToggleSettings={handleToggleSettings}
+      onToggleFullscreen={() => void chrome.toggleFullscreen()}
+      showVocabulary={showVocabulary}
+      onToggleVocabulary={() => {
+        if (!showVocabulary) {
+          setShowTypography(false);
+          ai.close();
+        }
+        setShowVocabulary((visible) => !visible);
+      }}
     >
-      {/* 1. Header Toolbar HUD (Disappears on silence) */}
-      <div
-        id="reader-hud-header"
-        className={`absolute top-0 left-0 right-0 h-16 border-b flex items-center justify-between px-6 z-40 backdrop-blur-sm transition-all duration-300 ${
-          hudVisible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-4 pointer-events-none"
-        } ${themeStyle.header}`}
-      >
-        <div className="flex items-center gap-4">
-          <button
-            onClick={onBackToLibrary}
-            id="btn-reader-back"
-            className="group flex items-center gap-1.5 text-black/60 dark:text-white/60 hover:text-black dark:hover:text-white transition-colors cursor-pointer font-bold font-sans text-[10px] uppercase tracking-[0.2em]"
-            title="Library Catalog"
-          >
-            <span>← Library</span>
-          </button>
-          
-          <div className="h-4 w-px bg-black/10 dark:bg-white/10"></div>
+      <ReaderSettingsPanel
+        visible={showTypography}
+        settings={settingsValue}
+        onChange={settings.updateSettings}
+        onClose={() => setShowTypography(false)}
+      />
 
-          <div>
-            <h4 className="font-serif font-bold text-xs max-w-[150px] md:max-w-[320px] truncate leading-tight italic">
-              {parsedBook?.title}
-            </h4>
-            <p className="font-sans text-[8px] text-black/45 dark:text-white/45 uppercase tracking-[0.2em] font-semibold mt-0.5">
-              {activeChapter ? activeChapter.title : "Chapter Description"}
-            </p>
-          </div>
-        </div>
-
-        {/* Action buttons Row */}
-        <div className="flex items-center gap-2">
-          {/* AI Page Summary Spark button */}
-          <button
-            onClick={handleSummarizeChapter}
-            id="btn-reader-summarize"
-            title="Summarize chapter [Key: S]"
-            className="px-2.5 py-1.5 rounded-sm border border-black/10 dark:border-white/10 text-black/80 dark:text-white/80 text-[9px] uppercase tracking-[0.15em] font-sans font-bold hover:border-black dark:hover:border-white transition-all cursor-pointer"
-          >
-            <span>Summarize</span>
-          </button>
-
-          <button
-            onClick={() => {
-              setShowTypography(!showTypography);
-            }}
-            id="btn-reader-typo"
-            title="Typography settings [Key: T]"
-            className={`px-2.5 py-1.5 rounded-sm border text-[9px] uppercase tracking-[0.15em] font-sans font-bold transition-all cursor-pointer ${
-              showTypography
-                ? "border-black dark:border-white bg-black dark:bg-white text-white dark:text-black"
-                : "border-black/10 dark:border-white/10 text-black/60 dark:text-white/60 hover:border-black dark:hover:border-white hover:text-black dark:hover:text-white"
-            }`}
-          >
-            Settings
-          </button>
-        </div>
-      </div>
-
-      {/* 2. Side Panel drawers for Typography and Chapter indexes */}
-      {showTypography && (
-        <div className="absolute top-[4.5rem] right-6 z-50 w-[min(24rem,calc(100vw-3rem))] animate-in fade-in zoom-in-95 duration-150" id="typo-panel-sec">
-          <TypographyPanel
-            settings={settings}
-            onChange={handleSettingsChange}
-            onClose={() => setShowTypography(false)}
-          />
-        </div>
-      )}
-
-      {/* 3. AI Side Popover */}
-      {aiState.visible && (
-        <AIResponsePopover
-          type={aiState.type}
-          inputText={aiState.inputText}
-          result={aiState.result}
-          loading={aiState.loading}
-          error={aiState.error}
-          onClose={() => setAiState((prev) => ({ ...prev, visible: false }))}
-          onRetry={() => {
-            if (aiState.type === "summarize") handleSummarizeChapter();
-            else handleSelectionAction(aiState.type, undefined, aiState.inputText);
-          }}
+      {showVocabulary && (
+        <VocabularyPanel
+          words={annotations.savedWords}
+          onClose={() => setShowVocabulary(false)}
+          onDelete={handleDeleteSavedWord}
         />
       )}
 
-      {/* 4. Selection Floating Menu Overlay */}
-      <SelectionMenu
-        onAction={handleSelectionAction}
-        onClose={() => {}}
-      />
-      {/* 5. Clean Reader Column stage */}
+      {ai.state.visible && !showVocabulary && (
+        <AIResponsePopover
+          type={ai.state.type}
+          inputText={ai.state.inputText}
+          result={ai.state.result}
+          loading={ai.state.loading}
+          error={ai.state.error}
+          onClose={ai.close}
+          onRetry={() => void ai.retry()}
+        />
+      )}
+
+      {!showVocabulary && <SelectionMenu onAction={handleSelectionAction} onClose={() => {}} />}
+
       <div
-        ref={containerRef}
+        ref={layout.containerRef}
         id="reader-scroll-viewport"
-        style={{
-          width: viewportWidthStr,
-        }}
-        className={`absolute left-1/2 -translate-x-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar transition-all duration-300 ${viewportTopClass} ${viewportBottomClass}`}
+        style={{ width: viewportWidth }}
+        className={`absolute left-1/2 -translate-x-1/2 overflow-x-hidden overflow-y-hidden no-scrollbar ${viewportTop} ${viewportBottom}`}
       >
         <div
           style={{
             width: "100%",
             maxWidth: "100%",
-            transform: `translate3d(-${chapterPageIndex * (viewportWidth + COLUMN_GAP)}px, 0, 0)`,
-            transition: suppressAnimation 
-              ? "opacity 0.15s ease-in-out" 
+            transform: `translate3d(-${layout.unitIndex * layout.unitStride}px, 0, 0)`,
+            transition: layout.suppressAnimation
+              ? "opacity 0.15s ease-in-out"
               : "transform 0.28s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.15s ease-in-out",
-            opacity: (loading || !layoutSettled) ? 0 : 1,
+            opacity: (book.loading || !layout.layoutSettled) ? 0 : 1,
           }}
           className="mx-auto px-0 h-full py-2 relative"
           id="reader-column"
         >
-          {/* Core Chapter HTML body render (Premium custom typographies binding) */}
           <div
+            ref={layout.contentRef}
             id="reader-chapter-body"
-            onClick={handleChapterClick}
+            onClick={(event) => void handleChapterClick(event)}
             style={{
-              fontSize: `${settings.fontSize}px`,
-              lineHeight: settings.lineHeight,
-              fontFamily: settings.fontFamily === "Source Serif" ? "'Source Serif 4', Georgia, serif" : `'${settings.fontFamily}', Georgia, serif`,
+              fontSize: `${settingsValue.fontSize}px`,
+              lineHeight: settingsValue.lineHeight,
+              fontFamily: settingsValue.fontFamily === "Source Serif" ? "'Source Serif 4', Georgia, serif" : `'${settingsValue.fontFamily}', Georgia, serif`,
               columnCount: visiblePageCount,
-              columnGap: `${COLUMN_GAP}px`,
+              columnWidth: visiblePageCount === 1 ? viewportWidth : "auto",
+              columnGap: `${READER_COLUMN_GAP}px`,
               height: "100%",
               columnFill: "auto",
             }}
-            className={`epub-content select-text font-serif leading-relaxed text-left antialiased focus:outline-none h-full`}
-            dangerouslySetInnerHTML={{ __html: getRenderHtml() }}
+            className="epub-content select-text font-serif leading-relaxed text-left antialiased focus:outline-none h-full"
+            dangerouslySetInnerHTML={renderedChapterContent}
           />
-
         </div>
       </div>
 
-      {/* 6. Marginally subtle sidebar clickable columns to navigate (Invisible) */}
       <div
         onClick={handlePrevPage}
         id="side-prev-hotspot"
@@ -1028,153 +476,49 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
         <span className="hidden md:block">→</span>
       </div>
 
-      {/* 8. Custom Right Edge Chapter Scrollbar & Hover Drawer */}
-      {chapters.length > 1 && !showTypography && !aiState.visible && (
-        <div
-          id="chapter-edge-nav"
-          className={`fixed right-0 top-1/2 -translate-y-1/2 z-50 flex items-center pr-2 transition-all duration-300 ${
-            showChapterBarPanel ? "pl-80 py-10" : "pl-10 py-10"
-          }`}
-          onMouseEnter={() => setShowChapterLines(true)}
-          onMouseLeave={() => {
+      {book.chapters.length > 1 && !showTypography && !ai.state.visible && !showVocabulary && (
+        <ChapterRail
+          chapters={book.chapters}
+          currentChapterIndex={book.currentChapterIndex}
+          theme={settingsValue.theme}
+          showChapterBarPanel={showChapterBarPanel}
+          showChapterLines={showChapterLines}
+          activeChapterRef={activeChapterRef}
+          onShowChapterLines={() => setShowChapterLines(true)}
+          onHideRail={() => {
             setShowChapterLines(false);
             setShowChapterBarPanel(false);
           }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {/* Hover panel (chapter titles list) */}
-          <div
-            className={`mr-3 w-72 max-h-[60vh] overflow-y-auto rounded-xl p-3 shadow-2xl border transition-all duration-300 no-scrollbar ${
-              showChapterBarPanel
-                ? "opacity-100 translate-x-0 pointer-events-auto"
-                : "opacity-0 translate-x-4 pointer-events-none"
-            } ${
-              settings.theme === "dark" || settings.theme === "muted"
-                ? "bg-neutral-900/90 border-neutral-800 text-white"
-                : "bg-white/90 border-neutral-200 text-black"
-            }`}
-          >
-            <div className="space-y-1 font-sans">
-              {chapters.map((ch, idx) => (
-                <button
-                  key={ch.id}
-                  ref={idx === currentChapterIdx ? activeChapterRef : null}
-                  onClick={() => {
-                    setSuppressAnimation(true);
-                    setPendingPageAction("first");
-                    setCurrentChapterIdx(idx);
-                  }}
-                  className={`w-full text-left px-3 py-2 rounded-lg text-xs truncate transition-all cursor-pointer ${
-                    idx === currentChapterIdx
-                      ? (settings.theme === "dark" || settings.theme === "muted"
-                          ? "bg-white/10 text-white font-bold"
-                          : "bg-black/10 text-black font-bold")
-                      : "opacity-60 hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/5"
-                  }`}
-                >
-                  {ch.title}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Scrollbar lines column */}
-          <div
-            className={`flex flex-col items-center justify-between py-2 px-1 cursor-pointer transition-all duration-300 ${
-              showChapterLines ? "opacity-100 translate-x-0" : "opacity-0 translate-x-2 pointer-events-none"
-            }`}
-            style={{ height: `${Math.min(350, chapters.length * 12)}px` }}
-            onMouseEnter={() => setShowChapterBarPanel(true)}
-          >
-            {chapters.map((_, idx) => (
-              <div
-                key={idx}
-                onClick={() => {
-                  setSuppressAnimation(true);
-                  setPendingPageAction("first");
-                  setCurrentChapterIdx(idx);
-                }}
-                className={`h-[2px] transition-all duration-200 rounded-full ${
-                  idx === currentChapterIdx
-                    ? "w-6 bg-black dark:bg-white"
-                    : "w-3 bg-neutral-400 dark:bg-neutral-600 opacity-60 hover:opacity-100 hover:w-5"
-                }`}
-                title={`Jump to Chapter ${idx + 1}`}
-              />
-            ))}
-          </div>
-        </div>
+          onShowChapterPanel={() => setShowChapterBarPanel(true)}
+          onSelectChapter={(index) => navigateToChapter(index, "first")}
+        />
       )}
 
-      {/* 7. Combined Unified Footer HUD (Disappears on silence) */}
-      <div
-        id="reader-footer"
-        className={`absolute bottom-0 left-0 right-0 h-12 border-t flex items-center justify-between px-6 z-40 backdrop-blur-sm transition-all duration-300 ${
-          hudVisible ? "opacity-100 translate-y-0" : "opacity-0 translate-y-3 pointer-events-none"
-        } ${themeStyle.footer}`}
-      >
-        {/* Thin reading progress bar line at the top border of the footer */}
-        <div className="absolute top-0 left-0 right-0 h-[1.5px] bg-black/5 dark:bg-white/5 overflow-hidden">
-          <div
-            className="h-full bg-black dark:bg-white transition-all duration-150"
-            style={{ width: `${currentBookMeta?.progress?.scrollPercent || 0}%` }}
-          />
-        </div>
+      <ReaderFooter
+        hudVisible={chrome.hudVisible}
+        footerClassName={themeStyle.footer}
+        currentChapterIndex={book.currentChapterIndex}
+        currentPageIndex={layout.unitIndex}
+        totalPages={layout.unitCount}
+        totalChapters={book.chapters.length}
+        progressPercent={book.currentBookMeta?.progress?.scrollPercent || 0}
+        onPreviousPage={handlePrevPage}
+        onNextPage={handleNextPage}
+      />
 
-        {/* Left Column: Prev navigation */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handlePrevPage}
-            id="btn-footer-prev"
-            disabled={currentChapterIdx === 0 && chapterPageIndex === 0}
-            className="text-[10px] uppercase tracking-[0.2em] font-sans font-bold text-black/50 hover:text-black dark:text-white/50 dark:hover:text-white disabled:opacity-20 transition-colors cursor-pointer"
-          >
-            Prev
-          </button>
-          <span className="hidden sm:inline text-[9px] uppercase tracking-[0.15em] font-sans font-semibold text-neutral-400/80 dark:text-neutral-500/80 select-none">
-            • Chapter {currentChapterIdx + 1}
-          </span>
-        </div>
-
-        {/* Center Column: Clean X of Y page indicator (Muted gray sans-serif font) */}
-        <div className="flex flex-col items-center justify-center">
-          <span className="font-sans text-[13px] md:text-[14px] font-normal text-neutral-400 dark:text-neutral-500 tracking-wide select-none">
-            {chapterPageIndex + 1} of {totalChapterPages}
-          </span>
-        </div>
-
-        {/* Right Column: Next navigation & percentage */}
-        <div className="flex items-center gap-3">
-          <span className="hidden sm:inline text-[9px] uppercase tracking-[0.15em] font-sans font-semibold text-neutral-400/80 dark:text-neutral-500/80 select-none">
-            {currentBookMeta?.progress ? Math.round(currentBookMeta.progress.scrollPercent) : 0}% Read •
-          </span>
-          <button
-            onClick={handleNextPage}
-            id="btn-footer-next"
-            disabled={currentChapterIdx === chapters.length - 1 && chapterPageIndex === totalChapterPages - 1}
-            className="text-[10px] uppercase tracking-[0.2em] font-sans font-bold text-black/50 hover:text-black dark:text-white/50 dark:hover:text-white disabled:opacity-20 transition-colors cursor-pointer"
-          >
-            Next
-          </button>
-        </div>
-      </div>
-
-      {/* 8. Self dismissed notification toast layout block */}
-      {notification && (
+      {chrome.notification && (
         <div
           id="toast-notification"
           className="fixed bottom-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-sm border border-black/15 dark:border-white/15 bg-white dark:bg-neutral-900 shadow-xl text-[10px] font-sans font-bold uppercase tracking-wider flex items-center justify-between gap-6 select-none animate-in fade-in slide-in-from-bottom-2 duration-150"
         >
           <div className="flex items-center gap-1.5">
-            <span className="text-black dark:text-white">{notification.text}</span>
+            <span className="text-black dark:text-white">{chrome.notification.text}</span>
           </div>
-          {notification.onUndo && (
+          {chrome.notification.onUndo && (
             <button
               onClick={() => {
-                if (notification.onUndo) {
-                  notification.onUndo();
-                }
-                setNotification(null);
+                void chrome.notification?.onUndo?.();
+                chrome.dismissNotification();
               }}
               className="text-black dark:text-white font-bold hover:underline cursor-pointer border-l border-black/15 dark:border-white/15 pl-2.5"
             >
@@ -1183,6 +527,6 @@ export default function ReaderView({ bookId, onBackToLibrary }: ReaderViewProps)
           )}
         </div>
       )}
-    </div>
+    </ReaderShell>
   );
 }
